@@ -1,0 +1,67 @@
+.landing-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.landing-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 1.1em;
+}
+
+.landing-hero {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 64px 24px 40px;
+  text-align: center;
+}
+
+.landing-hero h1 {
+  font-size: 2.2em;
+  margin: 0 0 16px;
+}
+
+.landing-lead {
+  color: var(--text-secondary);
+  font-size: 1.1em;
+  line-height: 1.5;
+  margin-bottom: 28px;
+}
+
+.landing-features {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 24px 48px;
+  width: 100%;
+}
+
+.landing-feature h3 {
+  margin-top: 0;
+}
+
+.landing-how {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+}
+
+.landing-steps {
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.landing-footer {
+  text-align: center;
+  padding: 20px;
+  border-top: 1px solid var(--border);
+  font-size: 0.85em;
+}
