@@ -13,50 +13,126 @@
 }
 
 .landing-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   font-size: 1.1em;
 }
 
+.landing-brand::before {
+  content: '';
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
 .landing-hero {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 64px 24px 40px;
+  padding: 88px 24px 48px;
   text-align: center;
+  background: radial-gradient(circle at 50% 0%, var(--accent-wash), transparent 65%);
 }
 
 .landing-hero h1 {
-  font-size: 2.2em;
-  margin: 0 0 16px;
+  font-size: 2.6em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 18px;
 }
 
 .landing-lead {
   color: var(--text-secondary);
-  font-size: 1.1em;
-  line-height: 1.5;
-  margin-bottom: 28px;
+  font-size: 1.15em;
+  line-height: 1.55;
+  margin-bottom: 32px;
+}
+
+.landing-hero .btn {
+  font-size: 1em;
+  padding: 11px 22px;
 }
 
 .landing-features {
-  max-width: 1000px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 0 24px 48px;
+  padding: 8px 24px 56px;
   width: 100%;
 }
 
+.landing-feature {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.landing-feature:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.landing-feature-icon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
 .landing-feature h3 {
-  margin-top: 0;
+  margin: 0 0 6px;
+}
+
+.landing-feature p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .landing-how {
   max-width: 640px;
   margin: 0 auto;
-  padding: 0 24px 64px;
+  padding: 0 24px 72px;
+}
+
+.landing-how h2 {
+  text-align: center;
+  margin-bottom: 24px;
 }
 
 .landing-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.landing-steps li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 40px;
   color: var(--text-secondary);
-  line-height: 1.8;
+  line-height: 1.5;
+}
+
+.landing-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.85em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .landing-footer {

@@ -1,24 +1,29 @@
 import { Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { selectAuth } from '../auth/authSlice';
+import { CATEGORICAL } from '../../palette';
 import './LandingPage.css';
 
 const FEATURES = [
   {
     title: 'Live inzicht',
     body: 'Bekijk in realtime je batterijstatus, zonneproductie, elektriciteitsprijzen en verbruik — rechtstreeks uit je eigen Home Assistant, zonder zelf een dashboard te bouwen.',
+    color: CATEGORICAL.blue,
   },
   {
     title: 'Zelf bedienen',
     body: 'Schakel stuurbare stopcontacten of je batterij op afstand, van op je gsm of pc, zonder in te loggen op Home Assistant zelf.',
+    color: CATEGORICAL.violet,
   },
   {
     title: 'Automatiseringen',
     body: 'Stel regels in die zelf reageren op metingen of tijdstippen — bijvoorbeeld laden wanneer de stroom het goedkoopst is.',
+    color: CATEGORICAL.orange,
   },
   {
     title: 'Meerdere woningen, één overzicht',
     body: 'Beheer al je installaties centraal: favoriete parameters per woning, gebruikersrechten en toegang, allemaal op één plek.',
+    color: CATEGORICAL.aqua,
   },
 ];
 
@@ -61,6 +66,7 @@ export default function LandingPage() {
       <section className="landing-features grid">
         {FEATURES.map((f) => (
           <div key={f.title} className="card landing-feature">
+            <span className="landing-feature-icon" style={{ background: f.color }} />
             <h3>{f.title}</h3>
             <p className="muted">{f.body}</p>
           </div>

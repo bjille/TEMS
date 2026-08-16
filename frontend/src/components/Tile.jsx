@@ -2,12 +2,12 @@ import { useNavigate } from 'react-router-dom';
 import { colorForType } from '../palette';
 import './Tile.css';
 
-function formatValue(value) {
+function formatValue(value, optionLabels) {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'number') {
     return Number.isInteger(value) ? value.toString() : value.toFixed(2);
   }
-  return String(value);
+  return optionLabels?.[value] || String(value);
 }
 
 export default function Tile({ parameter, woningId, children }) {
@@ -27,7 +27,7 @@ export default function Tile({ parameter, woningId, children }) {
       <div className="tile-accent" />
       <div className="tile-label">{parameter.label}</div>
       <div className="tile-value">
-        {formatValue(value)}
+        {formatValue(value, parameter.optionLabels)}
         {parameter.unit && <span className="tile-unit">{parameter.unit}</span>}
       </div>
       <div className="tile-meta muted">

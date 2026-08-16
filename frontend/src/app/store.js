@@ -5,6 +5,7 @@ import parametersReducer from '../features/parameters/parametersSlice';
 import adminUsersReducer from '../features/admin/adminUsersSlice';
 import automationsReducer from '../features/automations/automationsSlice';
 import globalAutomationsReducer from '../features/admin/globalAutomationsSlice';
+import globalParametersReducer from '../features/admin/globalParametersSlice';
 
 export const store = configureStore({
   reducer: {
@@ -14,5 +15,6 @@ export const store = configureStore({
     adminUsers: adminUsersReducer,
     automations: automationsReducer,
     globalAutomations: globalAutomationsReducer,
+    globalParameters: globalParametersReducer,
   },
 });

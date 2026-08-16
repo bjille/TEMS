@@ -8,6 +8,7 @@ const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { encrypt } = require('../utils/crypto');
 const { haConnectionManager } = require('../services/haConnectionManager');
+const { applyAllToWoning } = require('../services/globalParameterService');
 
 const router = express.Router();
 
@@ -57,6 +58,7 @@ router.post(
         haTokenEncrypted: encrypt(haToken),
       });
       await haConnectionManager.start(woning._id, req.app.get('io'));
+      await applyAllToWoning(woning._id);
       res.status(201).json(woning);
     } catch (err) {
       next(err);

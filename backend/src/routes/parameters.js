@@ -28,7 +28,9 @@ router.get('/', async (req, res, next) => {
       parameters.map(async (p) => {
         const latest = await Reading.findOne({ parameter: p._id }).sort({ timestamp: -1 });
         return {
-          ...p.toObject(),
+          // flattenMaps: plain toObject() leaves optionLabels as a Map
+          // instance, which JSON.stringify then serializes as "{}".
+          ...p.toObject({ flattenMaps: true }),
           latest: latest ? { value: latest.value, timestamp: latest.timestamp } : null,
         };
       })
@@ -54,6 +56,7 @@ router.post(
     body('favorite').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
+    body('optionLabels').optional().isObject(),
   ],
   async (req, res, next) => {
     try {
@@ -69,6 +72,7 @@ router.post(
         controlDomain: req.body.controlDomain,
         favorite: req.body.favorite || false,
         options: req.body.options || [],
+        optionLabels: req.body.optionLabels,
         createdBy: req.user._id,
       });
 
@@ -96,6 +100,7 @@ router.patch(
     body('favorite').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
+    body('optionLabels').optional().isObject(),
   ],
   async (req, res, next) => {
     try {

@@ -6,6 +6,7 @@ export default function SelectControl({ woningId, parameter }) {
   const [error, setError] = useState(null);
   const current = parameter.latest?.value ?? '';
   const options = parameter.options || [];
+  const optionLabels = parameter.optionLabels || {};
 
   async function handleChange(e) {
     const option = e.target.value;
@@ -27,7 +28,7 @@ export default function SelectControl({ woningId, parameter }) {
         {current && !options.includes(current) && <option value={current}>{current}</option>}
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {optionLabels[option] || option}
           </option>
         ))}
       </select>

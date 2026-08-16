@@ -41,8 +41,17 @@ export default function AdminParameters() {
   const parameters = useSelector(selectParametersForWoning(woningId));
   const [form, setForm] = useState(emptyForm);
   const [optionsText, setOptionsText] = useState('');
+  const [aliasMap, setAliasMap] = useState({});
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
+
+  const parsedOptions =
+    form.type === 'select_mode'
+      ? optionsText
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
 
   useEffect(() => {
     dispatch(fetchWoningen());
@@ -68,6 +77,7 @@ export default function AdminParameters() {
       favorite: parameter.favorite,
     });
     setOptionsText((parameter.options || []).join(', '));
+    setAliasMap(parameter.optionLabels || {});
     setError(null);
   }
 
@@ -75,19 +85,19 @@ export default function AdminParameters() {
     setEditingId(null);
     setForm(emptyForm);
     setOptionsText('');
+    setAliasMap({});
     setError(null);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
-    const options =
-      form.type === 'select_mode'
-        ? optionsText
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [];
+    const options = parsedOptions;
+    const optionLabels = {};
+    options.forEach((opt) => {
+      const alias = (aliasMap[opt] || '').trim();
+      if (alias && alias !== opt) optionLabels[opt] = alias;
+    });
     try {
       if (editingId) {
         const { type, label, unit, icon, controllable, favorite } = form;
@@ -102,14 +112,16 @@ export default function AdminParameters() {
             controllable,
             favorite,
             options,
+            optionLabels,
           })
         ).unwrap();
         setEditingId(null);
       } else {
-        await dispatch(createParameter({ woningId, ...form, options })).unwrap();
+        await dispatch(createParameter({ woningId, ...form, options, optionLabels })).unwrap();
       }
       setForm(emptyForm);
       setOptionsText('');
+      setAliasMap({});
     } catch (err) {
       setError(err);
     }
@@ -244,6 +256,27 @@ export default function AdminParameters() {
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
                   Moet overeenkomen met de <code>options</code> van de HA select-entity, bv.{' '}
                   <code>select.garage_emma_ess_regelmodus</code>.
+                </p>
+              </div>
+            )}
+            {form.type === 'select_mode' && parsedOptions.length > 0 && (
+              <div className="form-field">
+                <label>Weergavenamen (optioneel)</label>
+                {parsedOptions.map((opt) => (
+                  <div key={opt} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <code className="muted" style={{ minWidth: 140 }}>
+                      {opt}
+                    </code>
+                    <input
+                      placeholder={opt}
+                      value={aliasMap[opt] || ''}
+                      onChange={(e) => setAliasMap({ ...aliasMap, [opt]: e.target.value })}
+                    />
+                  </div>
+                ))}
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Laat leeg om de ruwe waarde te tonen. De ruwe waarde wordt nog steeds naar HA
+                  gestuurd bij bediening.
                 </p>
               </div>
             )}

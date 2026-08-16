@@ -27,9 +27,16 @@ const parameterSchema = new mongoose.Schema(
     // Valid values for a select_mode parameter (mirrors HA's select entity
     // `options` attribute), used to render a dropdown instead of a toggle.
     options: [{ type: String, trim: true }],
+    // Optional display aliases for select_mode options, keyed by the raw HA
+    // option value (e.g. "maximum_self_consumption" -> "Maximaal zelfverbruik").
+    // The raw value is still what gets sent to HA; this only affects display.
+    optionLabels: { type: Map, of: String },
     // Optional override for the HA service domain used to actuate this parameter.
     // Normally left empty: the domain is derived from entityId (e.g. "light.x" -> "light").
     controlDomain: { type: String, trim: true },
+    // Set when this Parameter was stamped out from a GlobalParameter template
+    // (see globalParameterService); lets edits to the template propagate here.
+    globalParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'GlobalParameter' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

@@ -12,6 +12,7 @@ import AdminWoningen from './features/admin/AdminWoningen';
 import AdminParameters from './features/admin/AdminParameters';
 import AdminUsers from './features/admin/AdminUsers';
 import AdminGlobalAutomations from './features/admin/AdminGlobalAutomations';
+import AdminGlobalParameters from './features/admin/AdminGlobalParameters';
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
               <Route path="parameters" element={<AdminParameters />} />
               <Route path="users" element={<AdminUsers />} />
               <Route path="global-automations" element={<AdminGlobalAutomations />} />
+              <Route path="global-parameters" element={<AdminGlobalParameters />} />
             </Route>
           </Route>
         </Route>

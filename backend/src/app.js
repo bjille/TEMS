@@ -13,6 +13,7 @@ const readingsRoutes = require('./routes/readings');
 const controlRoutes = require('./routes/control');
 const automationsRoutes = require('./routes/automations');
 const globalAutomationsRoutes = require('./routes/globalAutomations');
+const globalParametersRoutes = require('./routes/globalParameters');
 const adminUsersRoutes = require('./routes/adminUsers');
 
 function createApp() {
@@ -34,6 +35,13 @@ function createApp() {
 
   app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+  // API responses always reflect live DB/HA state, so never let the browser
+  // (or an intermediary proxy) serve a cached copy after a reload.
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
+
   app.use('/api/auth', authLimiter, authRoutes);
   app.use('/api/woningen', woningenRoutes);
   app.use('/api/woningen/:woningId/parameters', parametersRoutes);
@@ -41,6 +49,7 @@ function createApp() {
   app.use('/api/woningen/:woningId/control', controlRoutes);
   app.use('/api/woningen/:woningId/automations', automationsRoutes);
   app.use('/api/admin/global-automations', globalAutomationsRoutes);
+  app.use('/api/admin/global-parameters', globalParametersRoutes);
   app.use('/api/admin/users', adminUsersRoutes);
 
   app.use(notFoundHandler);

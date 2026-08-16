@@ -18,6 +18,9 @@ export default function AdminHome() {
           <NavLink to="global-automations" className="btn">
             Globale automatiseringen
           </NavLink>
+          <NavLink to="global-parameters" className="btn">
+            Globale parameters
+          </NavLink>
         </nav>
       </div>
       <Outlet />
