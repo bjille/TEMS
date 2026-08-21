@@ -49,6 +49,50 @@ export const deleteAutomation = createAsyncThunk(
   }
 );
 
+export const armTimer = createAsyncThunk(
+  'automations/timerArm',
+  async ({ woningId, automationId, durationMinutes }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(
+        `/woningen/${woningId}/automations/${automationId}/timer/arm`,
+        { durationMinutes }
+      );
+      return { woningId, automation: data };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Timer starten mislukt');
+    }
+  }
+);
+
+export const disarmTimer = createAsyncThunk(
+  'automations/timerDisarm',
+  async ({ woningId, automationId }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(
+        `/woningen/${woningId}/automations/${automationId}/timer/disarm`
+      );
+      return { woningId, automation: data };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Timer annuleren mislukt');
+    }
+  }
+);
+
+export const setTimerClock = createAsyncThunk(
+  'automations/timerClock',
+  async ({ woningId, automationId, timerClockTime }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.patch(
+        `/woningen/${woningId}/automations/${automationId}/timer/clock`,
+        { timerClockTime }
+      );
+      return { woningId, automation: data };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Tijdstip opslaan mislukt');
+    }
+  }
+);
+
 const automationsSlice = createSlice({
   name: 'automations',
   initialState: {
@@ -86,7 +130,19 @@ const automationsSlice = createSlice({
         state.byWoning[woningId] = (state.byWoning[woningId] || []).filter(
           (a) => a._id !== automationId
         );
-      });
+      })
+      .addMatcher(
+        (action) =>
+          [armTimer.fulfilled.type, disarmTimer.fulfilled.type, setTimerClock.fulfilled.type].includes(
+            action.type
+          ),
+        (state, action) => {
+          const { woningId, automation } = action.payload;
+          const list = state.byWoning[woningId] || [];
+          const idx = list.findIndex((a) => a._id === automation._id);
+          if (idx !== -1) list[idx] = automation;
+        }
+      );
   },
 });
 

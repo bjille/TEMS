@@ -9,6 +9,7 @@ const PARAMETER_TYPES = [
   'switch_consumer',
   'switch_controllable',
   'select_mode',
+  'number_controllable',
   'ev_charger_power',
   'ev_status',
   'custom',

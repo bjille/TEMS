@@ -18,11 +18,24 @@ function describeAction(automation) {
   if (automation.action.action === 'select_option') {
     return `instellen op "${automation.action.payload?.option}"`;
   }
+  if (automation.action.action === 'set_value') {
+    return `instellen op ${automation.action.payload?.value}`;
+  }
   return ACTION_LABELS[automation.action.action] || automation.action.action;
 }
 
 function describeTrigger(automation) {
   if (automation.trigger.type === 'state') return 'Bij nieuwe meting';
+  if (automation.trigger.type === 'timer') {
+    if (automation.trigger.timerMode === 'clock') {
+      return `Dynamische timer — elke dag om ${automation.trigger.timerClockTime || '?'} (aanpasbaar via dashboard)`;
+    }
+    const armed = automation.trigger.timerArmed && automation.trigger.timerTargetAt;
+    const duration = automation.trigger.timerDurationMinutes ?? '?';
+    return armed
+      ? `Dynamische timer — actief, vuurt af om ${new Date(automation.trigger.timerTargetAt).toLocaleTimeString('nl-BE')}`
+      : `Dynamische timer — countdown van ${duration} min (start via dashboard)`;
+  }
   const { hour, minute, days } = parseCronExpression(automation.trigger.cronExpression);
   const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   const dayLabel = days.length === 0 ? 'elke dag' : days.map((d) => DAY_LABELS[d]).join(', ');
@@ -117,16 +130,23 @@ export default function AutomationsPage() {
                 {describeTrigger(automation)}
               </p>
               <p style={{ fontSize: '0.9em' }}>
-                Als{' '}
-                {automation.conditions.map((c, i) => (
-                  <span key={i}>
-                    {i > 0 && ' EN '}
-                    <strong>{c.parameter?.label || '?'}</strong> {OPERATOR_LABELS[c.operator]}{' '}
-                    {c.value}
-                    {c.parameter?.unit || ''}
-                  </span>
-                ))}
-                , dan <strong>{automation.action.parameter?.label || '?'}</strong> {describeAction(automation)}.
+                {automation.conditions.length > 0 ? (
+                  <>
+                    Als{' '}
+                    {automation.conditions.map((c, i) => (
+                      <span key={i}>
+                        {i > 0 && ' EN '}
+                        <strong>{c.parameter?.label || '?'}</strong> {OPERATOR_LABELS[c.operator]}{' '}
+                        {c.value}
+                        {c.parameter?.unit || ''}
+                      </span>
+                    ))}
+                    , dan{' '}
+                  </>
+                ) : (
+                  'Zet '
+                )}
+                <strong>{automation.action.parameter?.label || '?'}</strong> {describeAction(automation)}.
               </p>
               {canManage && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>

@@ -30,6 +30,7 @@ export const PARAMETER_COLORS = {
   switch_consumer: CATEGORICAL.green,
   switch_controllable: CATEGORICAL.violet,
   select_mode: CATEGORICAL.violet,
+  number_controllable: CATEGORICAL.violet,
   custom: CATEGORICAL.red,
 };
 

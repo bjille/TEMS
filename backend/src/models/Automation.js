@@ -17,13 +17,29 @@ const automationSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     enabled: { type: Boolean, default: true },
     trigger: {
-      type: { type: String, enum: ['state', 'schedule'], required: true },
+      type: { type: String, enum: ['state', 'schedule', 'timer'], required: true },
       // 5-field cron expression, only used when type === 'schedule'
       cronExpression: { type: String, trim: true },
+      // Fields below are only used when type === 'timer'. A timer automation
+      // has no fixed schedule at creation time — its actual clock time or
+      // countdown duration is set (and changed) live from the dashboard.
+      timerMode: { type: String, enum: ['countdown', 'clock'] },
+      // 'clock' mode: fires daily at this "HH:MM", editable from the dashboard.
+      timerClockTime: { type: String, trim: true },
+      // 'countdown' mode: duration used the last time the timer was armed.
+      timerDurationMinutes: { type: Number, min: 1 },
+      // 'countdown' mode: whether a countdown is currently running.
+      timerArmed: { type: Boolean, default: false },
+      // 'countdown' mode: absolute moment the armed countdown fires, persisted
+      // so an in-progress countdown survives a backend restart.
+      timerTargetAt: { type: Date },
     },
+    // Sensor conditions. Required for 'state'/'schedule' triggers, optional
+    // for 'timer' triggers (which fire purely on time) — enforced in
+    // routes/automations.js's assertBusinessRules rather than here, since
+    // Mongoose update validators can't reliably see sibling fields via `this`.
     conditions: {
       type: [conditionSchema],
-      validate: (v) => Array.isArray(v) && v.length > 0,
     },
     action: {
       parameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },

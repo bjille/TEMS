@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchParameters, selectParametersForWoning } from './parametersSlice';
+import { fetchAutomations } from '../automations/automationsSlice';
 import { selectSelectedWoningId, selectWoningen, selectWoning } from '../woningen/woningenSlice';
 import { useLiveReadings } from './useLiveReadings';
 import Tile from '../../components/Tile';
@@ -14,6 +15,7 @@ function WoningOverviewSection({ woning }) {
 
   useEffect(() => {
     dispatch(fetchParameters(woning._id));
+    dispatch(fetchAutomations(woning._id));
   }, [woning._id, dispatch]);
 
   return (
@@ -53,7 +55,10 @@ export default function Dashboard() {
   useLiveReadings(overviewMode ? woningen.map((w) => w._id) : woningId);
 
   useEffect(() => {
-    if (woningId) dispatch(fetchParameters(woningId));
+    if (woningId) {
+      dispatch(fetchParameters(woningId));
+      dispatch(fetchAutomations(woningId));
+    }
   }, [woningId, dispatch]);
 
   if (woningen.length === 0) {

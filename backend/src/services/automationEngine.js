@@ -24,6 +24,8 @@ class AutomationEngine {
     this.byWoning = new Map();
     /** @type {Map<string, { task: any, woningId: string }>} automationId -> cron task */
     this.cronTasks = new Map();
+    /** @type {Map<string, { handle: any, woningId: string }>} automationId -> armed countdown timeout */
+    this.timerTimeouts = new Map();
   }
 
   async loadAll() {
@@ -40,6 +42,12 @@ class AutomationEngine {
         this.cronTasks.delete(automationId);
       }
     }
+    for (const [automationId, entry] of this.timerTimeouts) {
+      if (entry.woningId === woningId) {
+        clearTimeout(entry.handle);
+        this.timerTimeouts.delete(automationId);
+      }
+    }
 
     const automations = await Automation.find({ woning: woningId, enabled: true }).populate(
       'action.parameter'
@@ -48,13 +56,31 @@ class AutomationEngine {
 
     for (const automation of automations) {
       if (automation.trigger.type === 'schedule' && automation.trigger.cronExpression) {
-        this._registerCron(automation);
+        this._registerCron(automation, automation.trigger.cronExpression);
+      } else if (automation.trigger.type === 'timer') {
+        if (automation.trigger.timerMode === 'clock' && automation.trigger.timerClockTime) {
+          const cronExpression = this._clockTimeToCron(automation.trigger.timerClockTime);
+          if (cronExpression) this._registerCron(automation, cronExpression);
+        } else if (
+          automation.trigger.timerMode === 'countdown' &&
+          automation.trigger.timerArmed &&
+          automation.trigger.timerTargetAt
+        ) {
+          this._armCountdown(automation);
+        }
       }
     }
   }
 
-  _registerCron(automation) {
-    const expression = automation.trigger.cronExpression;
+  // Converts a dashboard-set "HH:MM" into a daily 5-field cron expression.
+  _clockTimeToCron(timerClockTime) {
+    const match = /^([01]?\d|2[0-3]):([0-5]?\d)$/.exec(timerClockTime);
+    if (!match) return null;
+    const [, hour, minute] = match;
+    return `${Number(minute)} ${Number(hour)} * * *`;
+  }
+
+  _registerCron(automation, expression) {
     if (!cron.validate(expression)) {
       console.error(`Invalid cron expression for automation ${automation._id}: ${expression}`);
       return;
@@ -65,6 +91,38 @@ class AutomationEngine {
       );
     });
     this.cronTasks.set(automation._id.toString(), { task, woningId: automation.woning.toString() });
+  }
+
+  // Arms (or re-arms, e.g. after a backend restart) an in-memory countdown
+  // for a 'timer'/'countdown' automation, firing at trigger.timerTargetAt.
+  _armCountdown(automation) {
+    const id = automation._id.toString();
+    const existing = this.timerTimeouts.get(id);
+    if (existing) clearTimeout(existing.handle);
+
+    const remainingMs = automation.trigger.timerTargetAt.getTime() - Date.now();
+    const handle = setTimeout(() => {
+      this.timerTimeouts.delete(id);
+      this._fireCountdown(id).catch((err) =>
+        console.error(`Automation ${id} (timer) failed:`, err)
+      );
+    }, Math.max(remainingMs, 0));
+    this.timerTimeouts.set(id, { handle, woningId: automation.woning.toString() });
+  }
+
+  // Re-fetches the automation so we act on its latest armed state (it may
+  // have been disarmed or disabled after the timeout was scheduled), runs
+  // the action, then disarms so the countdown is single-shot.
+  async _fireCountdown(automationId) {
+    const automation = await Automation.findById(automationId).populate('action.parameter');
+    if (!automation || !automation.enabled) return;
+    if (automation.trigger.type !== 'timer' || !automation.trigger.timerArmed) return;
+
+    await this.maybeRun(automation);
+
+    automation.trigger.timerArmed = false;
+    automation.trigger.timerTargetAt = undefined;
+    await automation.save();
   }
 
   async onReading(woningId, parameterId) {

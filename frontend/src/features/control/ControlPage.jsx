@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
+import { fetchAutomations } from '../automations/automationsSlice';
 import { selectSelectedWoningId } from '../woningen/woningenSlice';
 import { useLiveReadings } from '../parameters/useLiveReadings';
 import ControlWidget from './ControlWidget';
@@ -19,7 +20,10 @@ export default function ControlPage() {
   useLiveReadings(woningId);
 
   useEffect(() => {
-    if (woningId) dispatch(fetchParameters(woningId));
+    if (woningId) {
+      dispatch(fetchParameters(woningId));
+      dispatch(fetchAutomations(woningId));
+    }
   }, [woningId, dispatch]);
 
   useEffect(() => {

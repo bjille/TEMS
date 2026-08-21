@@ -34,16 +34,23 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
   const [hour, setHour] = useState(initialCron.hour);
   const [minute, setMinute] = useState(initialCron.minute);
   const [days, setDays] = useState(initialCron.days);
+  const [timerMode, setTimerMode] = useState(automation?.trigger?.timerMode || 'countdown');
+  const [timerClockTime, setTimerClockTime] = useState(automation?.trigger?.timerClockTime || '22:00');
+  const [timerDurationMinutes, setTimerDurationMinutes] = useState(
+    automation?.trigger?.timerDurationMinutes ?? 30
+  );
   const [conditions, setConditions] = useState(toInitialConditions(automation));
   const [actionParameter, setActionParameter] = useState(
     automation?.action?.parameter?._id || automation?.action?.parameter || ''
   );
   const [actionName, setActionName] = useState(automation?.action?.action || 'turn_on');
   const [actionOption, setActionOption] = useState(automation?.action?.payload?.option || '');
+  const [actionValue, setActionValue] = useState(automation?.action?.payload?.value ?? '');
   const [cooldownMinutes, setCooldownMinutes] = useState(automation?.cooldownMinutes ?? 5);
 
   const selectedActionParameter = controllableParameters.find((p) => p._id === actionParameter);
   const isSelectAction = selectedActionParameter?.type === 'select_mode';
+  const isNumberAction = selectedActionParameter?.type === 'number_controllable';
 
   function handleActionParameterChange(parameterId) {
     setActionParameter(parameterId);
@@ -51,7 +58,9 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
     if (parameter?.type === 'select_mode') {
       setActionName('select_option');
       setActionOption(parameter.options?.[0] || '');
-    } else if (actionName === 'select_option') {
+    } else if (parameter?.type === 'number_controllable') {
+      setActionName('set_value');
+    } else if (actionName === 'select_option' || actionName === 'set_value') {
       setActionName('turn_on');
     }
   }
@@ -78,23 +87,35 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
     e.preventDefault();
     setError(null);
 
-    const trigger =
-      triggerType === 'schedule'
-        ? { type: 'schedule', cronExpression: buildCronExpression({ hour, minute, days }) }
-        : { type: 'state' };
+    let trigger;
+    if (triggerType === 'schedule') {
+      trigger = { type: 'schedule', cronExpression: buildCronExpression({ hour, minute, days }) };
+    } else if (triggerType === 'timer') {
+      trigger =
+        timerMode === 'clock'
+          ? { type: 'timer', timerMode: 'clock', timerClockTime }
+          : { type: 'timer', timerMode: 'countdown', timerDurationMinutes: Number(timerDurationMinutes) };
+    } else {
+      trigger = { type: 'state' };
+    }
 
     const payload = {
       name,
       trigger,
-      conditions: conditions.map((c) => ({
-        parameter: c.parameter,
-        operator: c.operator,
-        value: c.value === '' || Number.isNaN(Number(c.value)) ? c.value : Number(c.value),
-      })),
+      // A timer fires purely on time, so it needs no sensor conditions.
+      conditions:
+        triggerType === 'timer'
+          ? []
+          : conditions.map((c) => ({
+              parameter: c.parameter,
+              operator: c.operator,
+              value: c.value === '' || Number.isNaN(Number(c.value)) ? c.value : Number(c.value),
+            })),
       action: {
         parameter: actionParameter,
-        action: isSelectAction ? 'select_option' : actionName,
+        action: isSelectAction ? 'select_option' : isNumberAction ? 'set_value' : actionName,
         ...(isSelectAction ? { payload: { option: actionOption } } : {}),
+        ...(isNumberAction ? { payload: { value: Number(actionValue) } } : {}),
       },
       cooldownMinutes: Number(cooldownMinutes),
     };
@@ -130,8 +151,47 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
         <select value={triggerType} onChange={(e) => setTriggerType(e.target.value)}>
           <option value="state">Bij nieuwe meting (state-based)</option>
           <option value="schedule">Op een vast tijdstip</option>
+          <option value="timer">Dynamische timer (instelbaar via dashboard)</option>
         </select>
       </div>
+
+      {triggerType === 'timer' && (
+        <div className="form-field">
+          <label>Type timer</label>
+          <select value={timerMode} onChange={(e) => setTimerMode(e.target.value)} style={{ marginBottom: 8 }}>
+            <option value="countdown">Countdown (aftellen vanaf gekozen duur)</option>
+            <option value="clock">Klok (elke dag op gekozen tijdstip)</option>
+          </select>
+          {timerMode === 'countdown' ? (
+            <div>
+              <label style={{ fontWeight: 'normal' }}>Standaardduur (minuten)</label>
+              <input
+                type="number"
+                min={1}
+                value={timerDurationMinutes}
+                onChange={(e) => setTimerDurationMinutes(e.target.value)}
+                style={{ width: 100 }}
+              />
+              <p className="muted" style={{ fontSize: '0.8em' }}>
+                Wordt gebruikt als startwaarde; de duur en start/stop van de timer worden nadien op het
+                dashboard bij het toestel zelf ingesteld.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label style={{ fontWeight: 'normal' }}>Standaardtijdstip</label>
+              <input
+                type="time"
+                value={timerClockTime}
+                onChange={(e) => setTimerClockTime(e.target.value)}
+              />
+              <p className="muted" style={{ fontSize: '0.8em' }}>
+                Het tijdstip kan nadien op het dashboard bij het toestel zelf aangepast worden.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {triggerType === 'schedule' && (
         <div className="form-field">
@@ -174,6 +234,7 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
         </div>
       )}
 
+      {triggerType !== 'timer' && (
       <div className="form-field">
         <label>Voorwaarden (allemaal moeten kloppen)</label>
         {conditions.map((condition, index) => (
@@ -222,6 +283,7 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
           + Voorwaarde toevoegen
         </button>
       </div>
+      )}
 
       <div className="form-field">
         <label>Actie</label>
@@ -254,6 +316,15 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
                 </option>
               ))}
             </select>
+          ) : isNumberAction ? (
+            <input
+              type="number"
+              value={actionValue}
+              onChange={(e) => setActionValue(e.target.value)}
+              placeholder="waarde"
+              required
+              style={{ flex: 1 }}
+            />
           ) : (
             <select value={actionName} onChange={(e) => setActionName(e.target.value)} style={{ flex: 1 }}>
               <option value="turn_on">Inschakelen</option>
