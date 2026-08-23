@@ -193,7 +193,7 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
         formatter: (p) =>
           p.dataType === 'edge'
             ? `${p.data.source} → ${p.data.target}: ${p.data.value} W`
-            : p.name,
+            : `${p.name}: ${round(p.value ?? p.data.value ?? 0)} W`,
       },
     };
 
@@ -217,17 +217,25 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
     // ECharts' sankey series has no circular layout, so "circulaire
     // lay-out" instead renders the same nodes/links as a `graph` series
     // (which does support layout: 'circular'), with arrowheads on the
-    // edges to keep the flow direction readable.
-    const flowByNode = new Map();
+    // edges to keep the flow direction readable. A node's "value" is
+    // max(inflow, outflow) rather than their sum — most nodes are pure
+    // sources or pure sinks anyway, but a pass-through node like "Thuis"
+    // (or "Stroomkring A" with its own children) has both, and since they
+    // balance by construction, summing them would silently double it.
+    const inflowByNode = new Map();
+    const outflowByNode = new Map();
     links.forEach((l) => {
-      flowByNode.set(l.source, (flowByNode.get(l.source) || 0) + l.value);
-      flowByNode.set(l.target, (flowByNode.get(l.target) || 0) + l.value);
+      outflowByNode.set(l.source, (outflowByNode.get(l.source) || 0) + l.value);
+      inflowByNode.set(l.target, (inflowByNode.get(l.target) || 0) + l.value);
     });
-    const maxFlow = Math.max(...flowByNode.values(), 1);
+    function nodeValue(name) {
+      return Math.max(inflowByNode.get(name) || 0, outflowByNode.get(name) || 0);
+    }
+    const maxFlow = Math.max(...nodes.map((n) => nodeValue(n.name)), 1);
     const graphNodes = nodes.map((n) => ({
       ...n,
-      value: flowByNode.get(n.name) || 0,
-      symbolSize: 16 + (34 * (flowByNode.get(n.name) || 0)) / maxFlow,
+      value: round(nodeValue(n.name)),
+      symbolSize: 16 + (34 * nodeValue(n.name)) / maxFlow,
     }));
 
     return {
@@ -240,7 +248,12 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
           data: graphNodes,
           links,
           roam: false,
-          label: { show: true, position: 'right', color: 'var(--text-secondary)' },
+          label: {
+            show: true,
+            position: 'right',
+            color: 'var(--text-secondary)',
+            formatter: (p) => `${p.name}\n${p.value} W`,
+          },
           edgeSymbol: ['none', 'arrow'],
           edgeSymbolSize: 8,
           lineStyle: { color: 'var(--baseline)', curveness: 0.2, opacity: 0.6 },
