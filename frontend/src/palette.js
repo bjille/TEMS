@@ -24,6 +24,7 @@ export const PARAMETER_COLORS = {
   battery_power: CATEGORICAL.blue,
   ev_charger_power: CATEGORICAL.orange,
   ev_status: CATEGORICAL.orange,
+  energy_consumption: CATEGORICAL.green,
   solar_power: CATEGORICAL.aqua,
   electricity_price: CATEGORICAL.yellow,
   grid_power: CATEGORICAL.magenta,

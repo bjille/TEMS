@@ -12,6 +12,9 @@ export default function AdminHome() {
           <NavLink to="parameters" className="btn">
             Parameters
           </NavLink>
+          <NavLink to="charts" className="btn">
+            Grafieken
+          </NavLink>
           <NavLink to="users" className="btn">
             Gebruikers
           </NavLink>

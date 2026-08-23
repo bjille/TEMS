@@ -103,6 +103,7 @@ const parametersSlice = createSlice({
 });
 
 export const { liveReadingReceived } = parametersSlice.actions;
+const EMPTY_PARAMETERS = [];
 export const selectParametersForWoning = (woningId) => (state) =>
-  state.parameters.byWoning[woningId] || [];
+  state.parameters.byWoning[woningId] || EMPTY_PARAMETERS;
 export default parametersSlice.reducer;

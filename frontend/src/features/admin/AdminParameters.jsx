@@ -22,6 +22,7 @@ const TYPE_OPTIONS = [
   'number_controllable',
   'ev_charger_power',
   'ev_status',
+  'energy_consumption',
   'custom',
 ];
 
@@ -33,6 +34,7 @@ const emptyForm = {
   icon: '',
   controllable: false,
   favorite: false,
+  realtime: false,
 };
 
 export default function AdminParameters() {
@@ -76,6 +78,7 @@ export default function AdminParameters() {
       icon: parameter.icon || '',
       controllable: parameter.controllable,
       favorite: parameter.favorite,
+      realtime: parameter.realtime || false,
     });
     setOptionsText((parameter.options || []).join(', '));
     setAliasMap(parameter.optionLabels || {});
@@ -101,7 +104,7 @@ export default function AdminParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, controllable, favorite } = form;
+        const { type, label, unit, icon, controllable, favorite, realtime } = form;
         await dispatch(
           updateParameter({
             woningId,
@@ -112,6 +115,7 @@ export default function AdminParameters() {
             icon,
             controllable,
             favorite,
+            realtime,
             options,
             optionLabels,
           })
@@ -153,6 +157,16 @@ export default function AdminParameters() {
     );
   }
 
+  async function toggleRealtime(parameter) {
+    await dispatch(
+      updateParameter({
+        woningId,
+        parameterId: parameter._id,
+        realtime: !parameter.realtime,
+      })
+    );
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -180,6 +194,7 @@ export default function AdminParameters() {
                 <th>Eenheid</th>
                 <th>Stuurbaar</th>
                 <th>Favoriet</th>
+                <th>Realtime</th>
                 <th></th>
               </tr>
             </thead>
@@ -208,6 +223,11 @@ export default function AdminParameters() {
                       onClick={() => toggleFavorite(p)}
                     >
                       {p.favorite ? '★ Ja' : '☆ Nee'}
+                    </button>
+                  </td>
+                  <td>
+                    <button className="btn" onClick={() => toggleRealtime(p)}>
+                      {p.realtime ? 'Ja' : 'Nee'}
                     </button>
                   </td>
                   <td style={{ display: 'flex', gap: 8 }}>
@@ -324,6 +344,25 @@ export default function AdminParameters() {
                 />
                 Favoriet (getoond in het overzicht van alle installaties)
               </label>
+            </div>
+            <div className="form-field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.realtime}
+                  onChange={(e) => setForm({ ...form, realtime: e.target.checked })}
+                  style={{ marginRight: 6 }}
+                />
+                Realtime (elke seconde verversen)
+              </label>
+              {form.realtime && (
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Forceert Home Assistant om deze entity elke seconde opnieuw te pollen i.p.v. te
+                  wachten op het eigen ververssinterval van de integratie. Gebruik dit spaarzaam
+                  (bv. enkel voor huidig vermogen), want het belast de HA-instantie en het
+                  onderliggende apparaat.
+                </p>
+              )}
             </div>
             {error && <p className="error-text">{error}</p>}
             <div style={{ display: 'flex', gap: 8 }}>

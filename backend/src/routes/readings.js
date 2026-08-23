@@ -46,7 +46,10 @@ router.get(
       if (!woning) throw new ApiError(404, 'Woning not found');
 
       const start = from ? new Date(from) : new Date(Date.now() - DEFAULT_RANGE_MS);
-      const end = to ? new Date(to) : undefined;
+      // HA's /api/history/period defaults end_time to start + 1 day when it's
+      // omitted, silently truncating any longer range. Always pass an
+      // explicit end so a multi-day query actually returns multiple days.
+      const end = to ? new Date(to) : new Date();
 
       const client = new HaClient({
         baseUrl: woning.haBaseUrl,
@@ -54,7 +57,7 @@ router.get(
       });
       const states = await client.fetchHistory(parameter.entityId, {
         start: start.toISOString(),
-        end: end?.toISOString(),
+        end: end.toISOString(),
       });
 
       const readings = states

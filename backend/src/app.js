@@ -12,6 +12,7 @@ const parametersRoutes = require('./routes/parameters');
 const readingsRoutes = require('./routes/readings');
 const controlRoutes = require('./routes/control');
 const automationsRoutes = require('./routes/automations');
+const chartsRoutes = require('./routes/charts');
 const globalAutomationsRoutes = require('./routes/globalAutomations');
 const globalParametersRoutes = require('./routes/globalParameters');
 const adminUsersRoutes = require('./routes/adminUsers');
@@ -48,6 +49,7 @@ function createApp() {
   app.use('/api/woningen/:woningId/readings', readingsRoutes);
   app.use('/api/woningen/:woningId/control', controlRoutes);
   app.use('/api/woningen/:woningId/automations', automationsRoutes);
+  app.use('/api/woningen/:woningId/charts', chartsRoutes);
   app.use('/api/admin/global-automations', globalAutomationsRoutes);
   app.use('/api/admin/global-parameters', globalParametersRoutes);
   app.use('/api/admin/users', adminUsersRoutes);

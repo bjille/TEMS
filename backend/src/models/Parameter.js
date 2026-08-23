@@ -12,6 +12,7 @@ const PARAMETER_TYPES = [
   'number_controllable',
   'ev_charger_power',
   'ev_status',
+  'energy_consumption',
   'custom',
 ];
 
@@ -25,6 +26,11 @@ const parameterSchema = new mongoose.Schema(
     icon: { type: String, trim: true },
     controllable: { type: Boolean, default: false },
     favorite: { type: Boolean, default: false },
+    // When set, haConnectionManager actively forces Home Assistant to
+    // re-poll this entity every REALTIME_POLL_MS instead of waiting for
+    // HA's own (often much slower, e.g. 30s) scan_interval to push an
+    // update. Meant for fast-changing values like current power draw.
+    realtime: { type: Boolean, default: false },
     // Valid values for a select_mode parameter (mirrors HA's select entity
     // `options` attribute), used to render a dropdown instead of a toggle.
     options: [{ type: String, trim: true }],

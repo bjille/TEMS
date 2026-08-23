@@ -5,11 +5,13 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Dashboard from './features/parameters/Dashboard';
 import HistoryPage from './features/history/HistoryPage';
+import ChartDetailPage from './features/charts/ChartDetailPage';
 import ControlPage from './features/control/ControlPage';
 import AutomationsPage from './features/automations/AutomationsPage';
 import AdminHome from './features/admin/AdminHome';
 import AdminWoningen from './features/admin/AdminWoningen';
 import AdminParameters from './features/admin/AdminParameters';
+import AdminCharts from './features/admin/AdminCharts';
 import AdminUsers from './features/admin/AdminUsers';
 import AdminGlobalAutomations from './features/admin/AdminGlobalAutomations';
 import AdminGlobalParameters from './features/admin/AdminGlobalParameters';
@@ -24,6 +26,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/woningen/:woningId/parameters/:parameterId/history" element={<HistoryPage />} />
+          <Route path="/woningen/:woningId/charts/:chartId" element={<ChartDetailPage />} />
           <Route path="/control" element={<ControlPage />} />
           <Route path="/automations" element={<AutomationsPage />} />
 
@@ -32,6 +35,7 @@ export default function App() {
               <Route index element={<Navigate to="woningen" replace />} />
               <Route path="woningen" element={<AdminWoningen />} />
               <Route path="parameters" element={<AdminParameters />} />
+              <Route path="charts" element={<AdminCharts />} />
               <Route path="users" element={<AdminUsers />} />
               <Route path="global-automations" element={<AdminGlobalAutomations />} />
               <Route path="global-parameters" element={<AdminGlobalParameters />} />

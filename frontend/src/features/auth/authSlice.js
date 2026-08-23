@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { api, setTokens, loadStoredTokens, onTokensRefresh } from '../../services/api';
+import { api, setTokens, loadStoredTokens } from '../../services/api';
 
 export const login = createAsyncThunk('auth/login', async ({ email, password }, { rejectWithValue }) => {
   try {
@@ -71,12 +71,6 @@ const authSlice = createSlice({
         state.accessToken = null;
       });
   },
-});
-
-onTokensRefresh((tokens) => {
-  if (!tokens) {
-    // handled by fetchMe rejection path / logout on next auth check
-  }
 });
 
 export const { logout, tokensCleared } = authSlice.actions;
