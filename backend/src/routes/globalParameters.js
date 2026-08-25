@@ -19,6 +19,7 @@ const createValidators = [
   body('label').isString().notEmpty(),
   body('unit').optional().isString(),
   body('icon').optional().isString(),
+  body('category').optional().isString(),
   body('controllable').optional().isBoolean(),
   body('controlDomain').optional().isString(),
   body('favorite').optional().isBoolean(),
@@ -47,6 +48,7 @@ router.post('/', createValidators, async (req, res, next) => {
       label: req.body.label,
       unit: req.body.unit,
       icon: req.body.icon,
+      category: req.body.category || '',
       controllable: req.body.controllable || false,
       controlDomain: req.body.controlDomain,
       favorite: req.body.favorite || false,
@@ -72,6 +74,7 @@ router.patch(
     body('label').optional().isString().notEmpty(),
     body('unit').optional().isString(),
     body('icon').optional().isString(),
+    body('category').optional().isString(),
     body('controllable').optional().isBoolean(),
     body('controlDomain').optional().isString(),
     body('favorite').optional().isBoolean(),
@@ -87,12 +90,13 @@ router.patch(
 
       // entityId is immutable: it's how each woning's Parameter copy is
       // matched, so changing it here would silently orphan every copy.
-      const { type, label, unit, icon, controllable, controlDomain, favorite, options, optionLabels } =
+      const { type, label, unit, icon, category, controllable, controlDomain, favorite, options, optionLabels } =
         req.body;
       if (type !== undefined) globalParameter.type = type;
       if (label !== undefined) globalParameter.label = label;
       if (unit !== undefined) globalParameter.unit = unit;
       if (icon !== undefined) globalParameter.icon = icon;
+      if (category !== undefined) globalParameter.category = category;
       if (controllable !== undefined) globalParameter.controllable = controllable;
       if (controlDomain !== undefined) globalParameter.controlDomain = controlDomain;
       if (favorite !== undefined) globalParameter.favorite = favorite;

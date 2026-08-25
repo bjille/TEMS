@@ -5,7 +5,7 @@ export default function AdminHome() {
     <div>
       <div className="section-header">
         <h1>Admin</h1>
-        <nav style={{ display: 'flex', gap: 12 }}>
+        <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
           <NavLink to="woningen" className="btn">
             Woningen
           </NavLink>
@@ -23,6 +23,9 @@ export default function AdminHome() {
           </NavLink>
           <NavLink to="global-parameters" className="btn">
             Globale parameters
+          </NavLink>
+          <NavLink to="parameter-categories" className="btn">
+            Categorieën
           </NavLink>
         </nav>
       </div>

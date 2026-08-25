@@ -51,10 +51,10 @@ router.post(
     body('label').isString().notEmpty(),
     body('unit').optional().isString(),
     body('icon').optional().isString(),
+    body('category').optional().isString(),
     body('controllable').optional().isBoolean(),
     body('controlDomain').optional().isString(),
     body('favorite').optional().isBoolean(),
-    body('realtime').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
     body('optionLabels').optional().isObject(),
@@ -69,10 +69,10 @@ router.post(
         label: req.body.label,
         unit: req.body.unit,
         icon: req.body.icon,
+        category: req.body.category || '',
         controllable: req.body.controllable || false,
         controlDomain: req.body.controlDomain,
         favorite: req.body.favorite || false,
-        realtime: req.body.realtime || false,
         options: req.body.options || [],
         optionLabels: req.body.optionLabels,
         createdBy: req.user._id,
@@ -96,11 +96,11 @@ router.patch(
     body('label').optional().isString().notEmpty(),
     body('unit').optional().isString(),
     body('icon').optional().isString(),
+    body('category').optional().isString(),
     body('controllable').optional().isBoolean(),
     body('controlDomain').optional().isString(),
     body('type').optional().isIn(PARAMETER_TYPES),
     body('favorite').optional().isBoolean(),
-    body('realtime').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
     body('optionLabels').optional().isObject(),
@@ -114,9 +114,6 @@ router.patch(
         { new: true }
       );
       if (!parameter) throw new ApiError(404, 'Parameter not found');
-      if (req.body.realtime !== undefined) {
-        await haConnectionManager.resubscribe(req.params.woningId);
-      }
       res.json(parameter);
     } catch (err) {
       next(err);

@@ -9,6 +9,7 @@ function toParameterFields(gp) {
     label: gp.label,
     unit: gp.unit,
     icon: gp.icon,
+    category: gp.category,
     controllable: gp.controllable,
     favorite: gp.favorite,
     options: gp.options,

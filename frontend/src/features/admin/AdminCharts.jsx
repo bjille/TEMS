@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
 import { fetchCharts, createChart, updateChart, deleteChart, selectChartsForWoning } from '../charts/chartsSlice';
+import { groupByCategory } from '../parameters/parameterCategories';
 
 const TYPE_OPTIONS = [
   { value: 'line', label: 'Lijn' },
@@ -22,6 +23,18 @@ const FLOW_ROLES = [
   { key: 'battery', label: 'Batterij (signed: + ontladen, − laden)' },
   { key: 'grid', label: 'Net (signed: + import, − export)' },
 ];
+
+function ParameterOptions({ parameters }) {
+  return groupByCategory(parameters).map(({ category, parameters: groupParameters }) => (
+    <optgroup key={category} label={category}>
+      {groupParameters.map((p) => (
+        <option key={p._id} value={p._id}>
+          {p.label}
+        </option>
+      ))}
+    </optgroup>
+  ));
+}
 
 const emptyForm = {
   name: '',
@@ -298,11 +311,7 @@ export default function AdminCharts() {
                       onChange={(e) => setFlowRole(role.key, e.target.value)}
                     >
                       <option value="">— geen —</option>
-                      {parameters.map((p) => (
-                        <option key={p._id} value={p._id}>
-                          {p.label}
-                        </option>
-                      ))}
+                      <ParameterOptions parameters={parameters} />
                     </select>
                   </div>
                 ))}
@@ -327,11 +336,7 @@ export default function AdminCharts() {
                         onChange={(e) => updateDeviceRow(i, 'parameterId', e.target.value)}
                       >
                         <option value="">— kies sensor —</option>
-                        {availableParams.map((p) => (
-                          <option key={p._id} value={p._id}>
-                            {p.label}
-                          </option>
-                        ))}
+                        <ParameterOptions parameters={availableParams} />
                       </select>
                       <span className="muted" style={{ fontSize: '0.85em' }}>
                         onder

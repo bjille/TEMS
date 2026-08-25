@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { fetchParameters, selectParametersForWoning } from './parametersSlice';
@@ -11,6 +11,52 @@ import ControlWidget from '../control/ControlWidget';
 import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
 import { WONING_STATUS_COLOR } from '../../palette';
+import { collectCategories, groupByCategory, categoryLabel } from './parameterCategories';
+import { fetchParameterCategories, selectParameterCategories } from './parameterCategoriesSlice';
+
+function ParameterGroups({ parameters, woningId, categoryFilter }) {
+  const filtered = categoryFilter
+    ? parameters.filter((p) => categoryLabel(p.category) === categoryFilter)
+    : parameters;
+  const groups = groupByCategory(filtered);
+
+  return (
+    <>
+      {groups.map(({ category, parameters: groupParameters }) => (
+        <div key={category} style={{ marginBottom: 16 }}>
+          {groups.length > 1 && (
+            <h4 className="muted" style={{ margin: '0 0 8px' }}>
+              {category}
+            </h4>
+          )}
+          <div className="grid">
+            {groupParameters.map((parameter) => (
+              <Tile key={parameter._id} parameter={parameter} woningId={woningId}>
+                <ControlWidget woningId={woningId} parameter={parameter} />
+              </Tile>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function CategoryFilter({ parameters, value, onChange }) {
+  const managedCategories = useSelector(selectParameterCategories);
+  const categories = collectCategories(parameters, managedCategories);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ minWidth: 180 }}>
+      <option value="">Alle categorieën</option>
+      {categories.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+      <option value="Overig">Overig</option>
+    </select>
+  );
+}
 
 function DashboardCharts({ woningId }) {
   const navigate = useNavigate();
@@ -32,7 +78,7 @@ function DashboardCharts({ woningId }) {
               className="btn btn-ghost"
               onClick={() => navigate(`/woningen/${woningId}/charts/${chart._id}`)}
             >
-              Detail →
+              Volledig scherm →
             </button>
           </div>
           {chart.type === 'energyflow' ? (
@@ -71,13 +117,7 @@ function WoningOverviewSection({ woning }) {
       {favorites.length === 0 ? (
         <p className="muted">Geen favoriete parameters ingesteld voor deze woning.</p>
       ) : (
-        <div className="grid">
-          {favorites.map((parameter) => (
-            <Tile key={parameter._id} parameter={parameter} woningId={woning._id}>
-              <ControlWidget woningId={woning._id} parameter={parameter} />
-            </Tile>
-          ))}
-        </div>
+        <ParameterGroups parameters={favorites} woningId={woning._id} categoryFilter="" />
       )}
       <DashboardCharts woningId={woning._id} />
     </div>
@@ -89,10 +129,15 @@ export default function Dashboard() {
   const woningId = useSelector(selectSelectedWoningId);
   const woningen = useSelector(selectWoningen);
   const parameters = useSelector(selectParametersForWoning(woningId));
+  const [categoryFilter, setCategoryFilter] = useState('');
 
   const overviewMode = woningen.length > 0 && !woningId;
 
   useLiveReadings(overviewMode ? woningen.map((w) => w._id) : woningId);
+
+  useEffect(() => {
+    dispatch(fetchParameterCategories());
+  }, [dispatch]);
 
   useEffect(() => {
     if (woningId) {
@@ -123,17 +168,14 @@ export default function Dashboard() {
     <div>
       <div className="section-header">
         <h1>Dashboard</h1>
+        {parameters.length > 0 && (
+          <CategoryFilter parameters={parameters} value={categoryFilter} onChange={setCategoryFilter} />
+        )}
       </div>
       {parameters.length === 0 ? (
         <p className="muted">Nog geen parameters geconfigureerd voor deze woning.</p>
       ) : (
-        <div className="grid">
-          {parameters.map((parameter) => (
-            <Tile key={parameter._id} parameter={parameter} woningId={woningId}>
-              <ControlWidget woningId={woningId} parameter={parameter} />
-            </Tile>
-          ))}
-        </div>
+        <ParameterGroups parameters={parameters} woningId={woningId} categoryFilter={categoryFilter} />
       )}
       <DashboardCharts woningId={woningId} />
     </div>

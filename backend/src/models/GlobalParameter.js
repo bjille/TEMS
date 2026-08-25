@@ -12,6 +12,7 @@ const globalParameterSchema = new mongoose.Schema(
     label: { type: String, required: true, trim: true },
     unit: { type: String, trim: true },
     icon: { type: String, trim: true },
+    category: { type: String, trim: true, default: '' },
     controllable: { type: Boolean, default: false },
     favorite: { type: Boolean, default: false },
     options: [{ type: String, trim: true }],

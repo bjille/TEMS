@@ -24,13 +24,12 @@ const parameterSchema = new mongoose.Schema(
     label: { type: String, required: true, trim: true },
     unit: { type: String, trim: true },
     icon: { type: String, trim: true },
+    // Free-text grouping label (e.g. "Batterij", "Zonnepanelen") used to
+    // organize parameters when entering them and when displaying the
+    // dashboard. Empty/unset falls back to an "Overig" bucket in the UI.
+    category: { type: String, trim: true, default: '' },
     controllable: { type: Boolean, default: false },
     favorite: { type: Boolean, default: false },
-    // When set, haConnectionManager actively forces Home Assistant to
-    // re-poll this entity every REALTIME_POLL_MS instead of waiting for
-    // HA's own (often much slower, e.g. 30s) scan_interval to push an
-    // update. Meant for fast-changing values like current power draw.
-    realtime: { type: Boolean, default: false },
     // Valid values for a select_mode parameter (mirrors HA's select entity
     // `options` attribute), used to render a dropdown instead of a toggle.
     options: [{ type: String, trim: true }],

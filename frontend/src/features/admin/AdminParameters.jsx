@@ -9,6 +9,8 @@ import {
   selectParametersForWoning,
 } from '../parameters/parametersSlice';
 import { colorForType, CATEGORICAL } from '../../palette';
+import { categoryLabel, collectCategories, sortParameters } from '../parameters/parameterCategories';
+import { fetchParameterCategories, selectParameterCategories } from '../parameters/parameterCategoriesSlice';
 
 const TYPE_OPTIONS = [
   'battery_soc',
@@ -32,9 +34,9 @@ const emptyForm = {
   label: '',
   unit: '',
   icon: '',
+  category: '',
   controllable: false,
   favorite: false,
-  realtime: false,
 };
 
 export default function AdminParameters() {
@@ -47,6 +49,30 @@ export default function AdminParameters() {
   const [aliasMap, setAliasMap] = useState({});
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [sortBy, setSortBy] = useState('category');
+  const [sortDir, setSortDir] = useState('asc');
+  const managedCategories = useSelector(selectParameterCategories);
+
+  const categories = collectCategories(parameters, managedCategories);
+  const filteredParameters = categoryFilter
+    ? parameters.filter((p) => categoryLabel(p.category) === categoryFilter)
+    : parameters;
+  const visibleParameters = sortParameters(filteredParameters, sortBy, sortDir);
+
+  function toggleSort(column) {
+    if (sortBy === column) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(column);
+      setSortDir('asc');
+    }
+  }
+
+  function sortIndicator(column) {
+    if (sortBy !== column) return null;
+    return sortDir === 'asc' ? ' ▲' : ' ▼';
+  }
 
   const parsedOptions =
     form.type === 'select_mode'
@@ -58,6 +84,7 @@ export default function AdminParameters() {
 
   useEffect(() => {
     dispatch(fetchWoningen());
+    dispatch(fetchParameterCategories());
   }, [dispatch]);
 
   useEffect(() => {
@@ -76,9 +103,9 @@ export default function AdminParameters() {
       label: parameter.label,
       unit: parameter.unit || '',
       icon: parameter.icon || '',
+      category: parameter.category || '',
       controllable: parameter.controllable,
       favorite: parameter.favorite,
-      realtime: parameter.realtime || false,
     });
     setOptionsText((parameter.options || []).join(', '));
     setAliasMap(parameter.optionLabels || {});
@@ -104,7 +131,7 @@ export default function AdminParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, controllable, favorite, realtime } = form;
+        const { type, label, unit, icon, category, controllable, favorite } = form;
         await dispatch(
           updateParameter({
             woningId,
@@ -113,9 +140,9 @@ export default function AdminParameters() {
             label,
             unit,
             icon,
+            category,
             controllable,
             favorite,
-            realtime,
             options,
             optionLabels,
           })
@@ -157,16 +184,6 @@ export default function AdminParameters() {
     );
   }
 
-  async function toggleRealtime(parameter) {
-    await dispatch(
-      updateParameter({
-        woningId,
-        parameterId: parameter._id,
-        realtime: !parameter.realtime,
-      })
-    );
-  }
-
   return (
     <div>
       <div className="section-header">
@@ -185,21 +202,45 @@ export default function AdminParameters() {
 
       {woningId && (
         <>
+          <div className="section-header" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <div className="form-field" style={{ marginBottom: 0, minWidth: 200 }}>
+                <label>Filter op categorie</label>
+                <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                  <option value="">Alle categorieën</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                  <option value="Overig">Overig</option>
+                </select>
+              </div>
+            </div>
+          </div>
           <table className="table" style={{ marginBottom: 24 }}>
             <thead>
               <tr>
-                <th>Label</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('label')}>
+                  Label{sortIndicator('label')}
+                </th>
                 <th>Entity ID</th>
-                <th>Type</th>
-                <th>Eenheid</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('type')}>
+                  Type{sortIndicator('type')}
+                </th>
+                <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('category')}>
+                  Categorie{sortIndicator('category')}
+                </th>
+                <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('unit')}>
+                  Eenheid{sortIndicator('unit')}
+                </th>
                 <th>Stuurbaar</th>
                 <th>Favoriet</th>
-                <th>Realtime</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {parameters.map((p) => (
+              {visibleParameters.map((p) => (
                 <tr key={p._id}>
                   <td>
                     <span
@@ -210,6 +251,7 @@ export default function AdminParameters() {
                   </td>
                   <td className="muted">{p.entityId}</td>
                   <td>{p.type}</td>
+                  <td>{categoryLabel(p.category)}</td>
                   <td>{p.unit}</td>
                   <td>
                     <button className="btn" onClick={() => toggleControllable(p)}>
@@ -223,11 +265,6 @@ export default function AdminParameters() {
                       onClick={() => toggleFavorite(p)}
                     >
                       {p.favorite ? '★ Ja' : '☆ Nee'}
-                    </button>
-                  </td>
-                  <td>
-                    <button className="btn" onClick={() => toggleRealtime(p)}>
-                      {p.realtime ? 'Ja' : 'Nee'}
                     </button>
                   </td>
                   <td style={{ display: 'flex', gap: 8 }}>
@@ -318,6 +355,24 @@ export default function AdminParameters() {
               />
             </div>
             <div className="form-field">
+              <label>Categorie (optioneel)</label>
+              <select
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+              >
+                <option value="">— Overig —</option>
+                {managedCategories.map((c) => (
+                  <option key={c._id} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                Groepeert deze parameter bij het invoeren en op het dashboard. Categorieën beheer
+                je onder <em>Admin → Categorieën</em>.
+              </p>
+            </div>
+            <div className="form-field">
               <label>
                 <input
                   type="checkbox"
@@ -344,25 +399,6 @@ export default function AdminParameters() {
                 />
                 Favoriet (getoond in het overzicht van alle installaties)
               </label>
-            </div>
-            <div className="form-field">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={form.realtime}
-                  onChange={(e) => setForm({ ...form, realtime: e.target.checked })}
-                  style={{ marginRight: 6 }}
-                />
-                Realtime (elke seconde verversen)
-              </label>
-              {form.realtime && (
-                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
-                  Forceert Home Assistant om deze entity elke seconde opnieuw te pollen i.p.v. te
-                  wachten op het eigen ververssinterval van de integratie. Gebruik dit spaarzaam
-                  (bv. enkel voor huidig vermogen), want het belast de HA-instantie en het
-                  onderliggende apparaat.
-                </p>
-              )}
             </div>
             {error && <p className="error-text">{error}</p>}
             <div style={{ display: 'flex', gap: 8 }}>

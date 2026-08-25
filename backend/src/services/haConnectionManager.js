@@ -4,15 +4,6 @@ const { HaClient } = require('./haClient');
 const { decrypt } = require('../utils/crypto');
 const { handleStateChange, markWoningStatus } = require('./ingestService');
 
-// How often we force Home Assistant to re-poll entities flagged `realtime`
-// on their Parameter (e.g. current power draw), instead of waiting for
-// HA's own, often much slower, per-integration scan_interval to push an
-// update. This calls HA's `homeassistant.update_entity` service, which
-// triggers an immediate poll of that entity's source; the resulting
-// state_changed event (if the value changed) flows through the normal
-// websocket subscription below.
-const REALTIME_POLL_MS = 1000;
-
 /**
  * Keeps one HaClient per active woning alive, maps incoming state_changed
  * events to configured Parameters, and feeds them into ingestService.
@@ -46,8 +37,7 @@ class HaConnectionManager {
     }
 
     const client = new HaClient({ baseUrl: woning.haBaseUrl, token });
-    const realtimeTimer = setInterval(() => this._pollRealtime(woningId), REALTIME_POLL_MS);
-    this.connections.set(woningId, { client, parametersByEntity, realtimeTimer });
+    this.connections.set(woningId, { client, parametersByEntity });
 
     client.on('authenticated', () => {
       markWoningStatus(woningId, 'active').catch(console.error);
@@ -100,25 +90,6 @@ class HaConnectionManager {
     );
   }
 
-  /** Forces HA to re-poll every entity flagged `realtime` for this woning. */
-  async _pollRealtime(woningId) {
-    const entry = this.connections.get(woningId);
-    if (!entry) return;
-
-    const entityIds = [...entry.parametersByEntity.values()]
-      .filter((p) => p.realtime)
-      .map((p) => p.entityId);
-    if (entityIds.length === 0) return;
-
-    try {
-      await entry.client.callService('homeassistant', 'update_entity', {
-        entity_id: entityIds,
-      });
-    } catch (err) {
-      console.error(`Realtime poll failed for woning ${woningId}:`, err.message);
-    }
-  }
-
   async _loadParameterMap(woningId) {
     const parameters = await Parameter.find({ woning: woningId });
     return new Map(parameters.map((p) => [p.entityId, p]));
@@ -141,7 +112,6 @@ class HaConnectionManager {
     woningId = woningId.toString();
     const entry = this.connections.get(woningId);
     if (!entry) return;
-    clearInterval(entry.realtimeTimer);
     entry.client.close();
     this.connections.delete(woningId);
   }

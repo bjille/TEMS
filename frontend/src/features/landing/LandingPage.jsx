@@ -93,6 +93,10 @@ export default function LandingPage() {
         </ol>
       </section>
 
+      <section className="landing-screenshot">
+        <img src="/tems-screenshot.png" alt="TEMS dashboard met batterij, zonnepanelen en energiestromen" />
+      </section>
+
       <footer className="landing-footer muted">TEMS — Energiemanagement Platform</footer>
     </div>
   );

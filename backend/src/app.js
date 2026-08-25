@@ -16,6 +16,7 @@ const chartsRoutes = require('./routes/charts');
 const globalAutomationsRoutes = require('./routes/globalAutomations');
 const globalParametersRoutes = require('./routes/globalParameters');
 const adminUsersRoutes = require('./routes/adminUsers');
+const parameterCategoriesRoutes = require('./routes/parameterCategories');
 
 function createApp() {
   const app = express();
@@ -53,6 +54,7 @@ function createApp() {
   app.use('/api/admin/global-automations', globalAutomationsRoutes);
   app.use('/api/admin/global-parameters', globalParametersRoutes);
   app.use('/api/admin/users', adminUsersRoutes);
+  app.use('/api/parameter-categories', parameterCategoriesRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

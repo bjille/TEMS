@@ -8,6 +8,8 @@ import {
   selectAllGlobalParameters,
 } from './globalParametersSlice';
 import { colorForType, CATEGORICAL } from '../../palette';
+import { categoryLabel, collectCategories, sortParameters } from '../parameters/parameterCategories';
+import { fetchParameterCategories, selectParameterCategories } from '../parameters/parameterCategoriesSlice';
 
 const TYPE_OPTIONS = [
   'battery_soc',
@@ -30,6 +32,7 @@ const emptyForm = {
   label: '',
   unit: '',
   icon: '',
+  category: '',
   controllable: false,
   favorite: false,
 };
@@ -42,6 +45,30 @@ export default function AdminGlobalParameters() {
   const [aliasMap, setAliasMap] = useState({});
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [sortBy, setSortBy] = useState('category');
+  const [sortDir, setSortDir] = useState('asc');
+  const managedCategories = useSelector(selectParameterCategories);
+
+  const categories = collectCategories(parameters, managedCategories);
+  const filteredParameters = categoryFilter
+    ? parameters.filter((p) => categoryLabel(p.category) === categoryFilter)
+    : parameters;
+  const visibleParameters = sortParameters(filteredParameters, sortBy, sortDir);
+
+  function toggleSort(column) {
+    if (sortBy === column) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(column);
+      setSortDir('asc');
+    }
+  }
+
+  function sortIndicator(column) {
+    if (sortBy !== column) return null;
+    return sortDir === 'asc' ? ' ▲' : ' ▼';
+  }
 
   const parsedOptions =
     form.type === 'select_mode'
@@ -53,6 +80,7 @@ export default function AdminGlobalParameters() {
 
   useEffect(() => {
     dispatch(fetchGlobalParameters());
+    dispatch(fetchParameterCategories());
   }, [dispatch]);
 
   function openEditForm(parameter) {
@@ -63,6 +91,7 @@ export default function AdminGlobalParameters() {
       label: parameter.label,
       unit: parameter.unit || '',
       icon: parameter.icon || '',
+      category: parameter.category || '',
       controllable: parameter.controllable,
       favorite: parameter.favorite,
     });
@@ -90,7 +119,7 @@ export default function AdminGlobalParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, controllable, favorite } = form;
+        const { type, label, unit, icon, category, controllable, favorite } = form;
         await dispatch(
           updateGlobalParameter({
             id: editingId,
@@ -98,6 +127,7 @@ export default function AdminGlobalParameters() {
             label,
             unit,
             icon,
+            category,
             controllable,
             favorite,
             options,
@@ -141,20 +171,45 @@ export default function AdminGlobalParameters() {
         gebruiken. Nieuwe woningen krijgen ze ook automatisch bij aanmaak.
       </p>
 
+      <div className="section-header" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 16 }}>
+          <div className="form-field" style={{ marginBottom: 0, minWidth: 200 }}>
+            <label>Filter op categorie</label>
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+              <option value="">Alle categorieën</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              <option value="Overig">Overig</option>
+            </select>
+          </div>
+        </div>
+      </div>
       <table className="table" style={{ marginBottom: 24 }}>
         <thead>
           <tr>
-            <th>Label</th>
+            <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('label')}>
+              Label{sortIndicator('label')}
+            </th>
             <th>Entity ID</th>
-            <th>Type</th>
-            <th>Eenheid</th>
+            <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('type')}>
+              Type{sortIndicator('type')}
+            </th>
+            <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('category')}>
+              Categorie{sortIndicator('category')}
+            </th>
+            <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('unit')}>
+              Eenheid{sortIndicator('unit')}
+            </th>
             <th>Stuurbaar</th>
             <th>Favoriet</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {parameters.map((p) => (
+          {visibleParameters.map((p) => (
             <tr key={p._id}>
               <td>
                 <span
@@ -165,6 +220,7 @@ export default function AdminGlobalParameters() {
               </td>
               <td className="muted">{p.entityId}</td>
               <td>{p.type}</td>
+              <td>{categoryLabel(p.category)}</td>
               <td>{p.unit}</td>
               <td>
                 <button className="btn" onClick={() => toggleControllable(p)}>
@@ -265,6 +321,24 @@ export default function AdminGlobalParameters() {
             value={form.unit}
             onChange={(e) => setForm({ ...form, unit: e.target.value })}
           />
+        </div>
+        <div className="form-field">
+          <label>Categorie (optioneel)</label>
+          <select
+            value={form.category}
+            onChange={(e) => setForm({ ...form, category: e.target.value })}
+          >
+            <option value="">— Overig —</option>
+            {managedCategories.map((c) => (
+              <option key={c._id} value={c.name}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+            Groepeert deze parameter bij het invoeren en op het dashboard. Categorieën beheer je
+            onder <em>Admin → Categorieën</em>.
+          </p>
         </div>
         <div className="form-field">
           <label>
