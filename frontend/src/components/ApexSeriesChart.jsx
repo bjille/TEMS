@@ -19,9 +19,15 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
       setError(null);
       try {
         const from = new Date(Date.now() - chart.rangeHours * 3600 * 1000).toISOString();
+        // Bar charts show one stacked bar per hour (each device's average
+        // power that hour), so ask the backend to pre-aggregate to hourly
+        // points instead of fetching the full-resolution history — for a
+        // busy sensor that's the difference between ~24 points and tens of
+        // thousands, which is what made this chart take 15-20s to render.
+        const params = chart.type === 'bar' ? { interval: 'hour' } : {};
         const results = await Promise.all(
           chart.parameters.map((p) =>
-            api.get(`/woningen/${woningId}/readings`, { params: { parameterId: p._id, from } })
+            api.get(`/woningen/${woningId}/readings`, { params: { parameterId: p._id, from, ...params } })
           )
         );
         if (cancelled) return;
@@ -50,9 +56,14 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
         zoom: { enabled: false },
         foreColor: 'var(--text-secondary)',
         background: 'transparent',
+        // Bar charts stack each device's hourly average on top of the
+        // others, so a bar's total height reads as that hour's combined
+        // consumption across all selected devices.
+        stacked: chart.type === 'bar',
       },
       colors: chart.parameters.map((_, i) => PALETTE[i % PALETTE.length]),
       stroke: { curve: 'smooth', width: 2 },
+      ...(chart.type === 'bar' ? { plotOptions: { bar: { columnWidth: '70%' } } } : {}),
       // Passing `fill: undefined` (instead of omitting the key) makes
       // ApexCharts overwrite its own internal fill/colors defaults with
       // undefined, which later crashes color setup for every non-'area'
