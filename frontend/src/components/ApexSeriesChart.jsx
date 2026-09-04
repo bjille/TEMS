@@ -53,7 +53,14 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
       },
       colors: chart.parameters.map((_, i) => PALETTE[i % PALETTE.length]),
       stroke: { curve: 'smooth', width: 2 },
-      fill: chart.type === 'area' ? { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0.05 } } : undefined,
+      // Passing `fill: undefined` (instead of omitting the key) makes
+      // ApexCharts overwrite its own internal fill/colors defaults with
+      // undefined, which later crashes color setup for every non-'area'
+      // chart with "Cannot read properties of undefined (reading 'colors')"
+      // and renders nothing. Only set `fill` at all for 'area' charts.
+      ...(chart.type === 'area'
+        ? { fill: { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0.05 } } }
+        : {}),
       grid: { borderColor: 'var(--gridline)' },
       xaxis: {
         type: 'datetime',

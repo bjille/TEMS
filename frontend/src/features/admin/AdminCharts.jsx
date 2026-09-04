@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
@@ -23,6 +23,14 @@ const FLOW_ROLES = [
   { key: 'battery', label: 'Batterij (signed: + ontladen, − laden)' },
   { key: 'grid', label: 'Net (signed: + import, − export)' },
 ];
+
+// Switch entities (e.g. "switch.keuken_droogkast") report string states
+// ("on"/"off") rather than numeric readings, so they can't be plotted on a
+// line/area/bar chart or used as a signed power role in an energyflow
+// diagram — keep them out of every parameter picker in this section.
+function isSwitchEntity(parameter) {
+  return parameter.entityId?.split('.')[0] === 'switch';
+}
 
 function ParameterOptions({ parameters }) {
   return groupByCategory(parameters).map(({ category, parameters: groupParameters }) => (
@@ -65,6 +73,10 @@ export default function AdminCharts() {
   const woningen = useSelector(selectWoningen);
   const [woningId, setWoningId] = useState('');
   const parameters = useSelector(selectParametersForWoning(woningId));
+  const chartableParameters = useMemo(
+    () => parameters.filter((p) => !isSwitchEntity(p)),
+    [parameters]
+  );
   const charts = useSelector(selectChartsForWoning(woningId));
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -311,7 +323,7 @@ export default function AdminCharts() {
                       onChange={(e) => setFlowRole(role.key, e.target.value)}
                     >
                       <option value="">— geen —</option>
-                      <ParameterOptions parameters={parameters} />
+                      <ParameterOptions parameters={chartableParameters} />
                     </select>
                   </div>
                 ))}
@@ -325,7 +337,7 @@ export default function AdminCharts() {
                   const usedElsewhere = form.devices
                     .filter((_, j) => j !== i)
                     .map((x) => x.parameterId);
-                  const availableParams = parameters.filter(
+                  const availableParams = chartableParameters.filter(
                     (p) => p._id === d.parameterId || !usedElsewhere.includes(p._id)
                   );
                   const availableParents = form.devices.slice(0, i).filter((x) => x.parameterId);
@@ -364,7 +376,7 @@ export default function AdminCharts() {
                 <button type="button" className="btn" onClick={addDeviceRow}>
                   + Toestel toevoegen
                 </button>
-                {parameters.length === 0 && (
+                {chartableParameters.length === 0 && (
                   <p className="muted" style={{ margin: '6px 0 0' }}>
                     Deze woning heeft nog geen parameters.
                   </p>
@@ -411,7 +423,7 @@ export default function AdminCharts() {
                 <div className="form-field">
                   <label>Parameters</label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                    {parameters.map((p) => (
+                    {chartableParameters.map((p) => (
                       <label key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
                           type="checkbox"
@@ -421,7 +433,7 @@ export default function AdminCharts() {
                         {p.label}
                       </label>
                     ))}
-                    {parameters.length === 0 && (
+                    {chartableParameters.length === 0 && (
                       <p className="muted" style={{ margin: 0 }}>
                         Deze woning heeft nog geen parameters.
                       </p>

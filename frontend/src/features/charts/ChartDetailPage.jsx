@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchCharts, selectChartsForWoning } from './chartsSlice';
@@ -33,6 +33,17 @@ export default function ChartDetailPage() {
     if (chart && rangeHours === null) setRangeHours(chart.rangeHours);
   }, [chart, rangeHours]);
 
+  // Without this memo, spreading `chart` into a new object on every render
+  // gives ApexSeriesChart a new prop identity on every unrelated re-render
+  // (e.g. a live reading arriving via useLiveReadings), which re-triggers
+  // its data fetch and forces react-apexcharts to tear down and recreate
+  // the chart instance repeatedly — including while a previous async
+  // render is still in flight, which can leave the chart blank.
+  const displayChart = useMemo(
+    () => (chart ? { ...chart, rangeHours: rangeHours || chart.rangeHours } : null),
+    [chart, rangeHours]
+  );
+
   if (!chart) {
     return (
       <div>
@@ -47,7 +58,6 @@ export default function ChartDetailPage() {
   }
 
   const isEnergyFlow = chart.type === 'energyflow';
-  const displayChart = { ...chart, rangeHours: rangeHours || chart.rangeHours };
   const subtitle = isEnergyFlow
     ? Object.values(chart.flowRoles || {})
         .filter(Boolean)
