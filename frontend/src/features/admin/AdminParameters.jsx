@@ -37,6 +37,7 @@ const emptyForm = {
   category: '',
   controllable: false,
   favorite: false,
+  invert: false,
 };
 
 export default function AdminParameters() {
@@ -106,6 +107,7 @@ export default function AdminParameters() {
       category: parameter.category || '',
       controllable: parameter.controllable,
       favorite: parameter.favorite,
+      invert: parameter.invert || false,
     });
     setOptionsText((parameter.options || []).join(', '));
     setAliasMap(parameter.optionLabels || {});
@@ -131,7 +133,7 @@ export default function AdminParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, category, controllable, favorite } = form;
+        const { type, label, unit, icon, category, controllable, favorite, invert } = form;
         await dispatch(
           updateParameter({
             woningId,
@@ -143,6 +145,7 @@ export default function AdminParameters() {
             category,
             controllable,
             favorite,
+            invert,
             options,
             optionLabels,
           })
@@ -180,6 +183,16 @@ export default function AdminParameters() {
         woningId,
         parameterId: parameter._id,
         favorite: !parameter.favorite,
+      })
+    );
+  }
+
+  async function toggleInvert(parameter) {
+    await dispatch(
+      updateParameter({
+        woningId,
+        parameterId: parameter._id,
+        invert: !parameter.invert,
       })
     );
   }
@@ -236,6 +249,7 @@ export default function AdminParameters() {
                 </th>
                 <th>Stuurbaar</th>
                 <th>Favoriet</th>
+                <th>Omgekeerd</th>
                 <th></th>
               </tr>
             </thead>
@@ -265,6 +279,11 @@ export default function AdminParameters() {
                       onClick={() => toggleFavorite(p)}
                     >
                       {p.favorite ? '★ Ja' : '☆ Nee'}
+                    </button>
+                  </td>
+                  <td>
+                    <button className="btn" onClick={() => toggleInvert(p)}>
+                      {p.invert ? 'Ja (×-1)' : 'Nee'}
                     </button>
                   </td>
                   <td style={{ display: 'flex', gap: 8 }}>
@@ -399,6 +418,21 @@ export default function AdminParameters() {
                 />
                 Favoriet (getoond in het overzicht van alle installaties)
               </label>
+            </div>
+            <div className="form-field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.invert}
+                  onChange={(e) => setForm({ ...form, invert: e.target.checked })}
+                  style={{ marginRight: 6 }}
+                />
+                Waarde omkeren (× -1)
+              </label>
+              <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                Draait het teken van elke binnenkomende meting om, bv. om een altijd-positieve
+                vermogenssensor als negatief (export) te tonen. Geldt alleen voor nieuwe metingen.
+              </p>
             </div>
             {error && <p className="error-text">{error}</p>}
             <div style={{ display: 'flex', gap: 8 }}>

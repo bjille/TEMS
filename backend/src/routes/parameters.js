@@ -55,6 +55,7 @@ router.post(
     body('controllable').optional().isBoolean(),
     body('controlDomain').optional().isString(),
     body('favorite').optional().isBoolean(),
+    body('invert').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
     body('optionLabels').optional().isObject(),
@@ -73,6 +74,7 @@ router.post(
         controllable: req.body.controllable || false,
         controlDomain: req.body.controlDomain,
         favorite: req.body.favorite || false,
+        invert: req.body.invert || false,
         options: req.body.options || [],
         optionLabels: req.body.optionLabels,
         createdBy: req.user._id,
@@ -81,9 +83,6 @@ router.post(
       await haConnectionManager.resubscribe(req.params.woningId);
       res.status(201).json(parameter);
     } catch (err) {
-      if (err.code === 11000) {
-        return next(new ApiError(409, 'This entity is already mapped for this woning'));
-      }
       next(err);
     }
   }
@@ -101,6 +100,7 @@ router.patch(
     body('controlDomain').optional().isString(),
     body('type').optional().isIn(PARAMETER_TYPES),
     body('favorite').optional().isBoolean(),
+    body('invert').optional().isBoolean(),
     body('options').optional().isArray(),
     body('options.*').optional().isString(),
     body('optionLabels').optional().isObject(),

@@ -91,10 +91,13 @@ router.get(
       });
 
       let readings = states
-        .map((s) => ({
-          value: coerceValue(s.state),
-          timestamp: s.last_changed || s.last_updated,
-        }))
+        .map((s) => {
+          const value = coerceValue(s.state);
+          return {
+            value: parameter.invert && typeof value === 'number' ? -value : value,
+            timestamp: s.last_changed || s.last_updated,
+          };
+        })
         .filter((r) => typeof r.value === 'number');
 
       if (interval === 'hour') readings = bucketHourly(readings, start, end);

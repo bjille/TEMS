@@ -30,6 +30,9 @@ const parameterSchema = new mongoose.Schema(
     category: { type: String, trim: true, default: '' },
     controllable: { type: Boolean, default: false },
     favorite: { type: Boolean, default: false },
+    // Flips the sign of every incoming reading (e.g. a grid-power sensor that
+    // always reports positive, where negative should mean "exporting").
+    invert: { type: Boolean, default: false },
     // Valid values for a select_mode parameter (mirrors HA's select entity
     // `options` attribute), used to render a dropdown instead of a toggle.
     options: [{ type: String, trim: true }],
@@ -48,7 +51,9 @@ const parameterSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-parameterSchema.index({ woning: 1, entityId: 1 }, { unique: true });
+// Not unique: the same HA entity can be mapped to more than one Parameter
+// within a woning (e.g. once plain and once with `invert` set).
+parameterSchema.index({ woning: 1, entityId: 1 });
 
 module.exports = mongoose.model('Parameter', parameterSchema);
 module.exports.PARAMETER_TYPES = PARAMETER_TYPES;

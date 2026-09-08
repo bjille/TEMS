@@ -10,7 +10,8 @@ const { globalAutomationEngine } = require('./globalAutomationEngine');
 async function handleStateChange({ woningId, parameter, newState, io }) {
   if (!newState) return;
 
-  const value = coerceValue(newState.state);
+  let value = coerceValue(newState.state);
+  if (parameter.invert && typeof value === 'number') value = -value;
   const timestamp = newState.last_changed ? new Date(newState.last_changed) : new Date();
 
   const reading = await Reading.create({

@@ -10,7 +10,7 @@ const { handleStateChange, markWoningStatus } = require('./ingestService');
  */
 class HaConnectionManager {
   constructor() {
-    /** @type {Map<string, { client: HaClient, parametersByEntity: Map<string, any> }>} */
+    /** @type {Map<string, { client: HaClient, parametersByEntity: Map<string, any[]> }>} */
     this.connections = new Map();
   }
 
@@ -52,11 +52,13 @@ class HaConnectionManager {
 
     client.on('state_changed', ({ entityId, newState }) => {
       const entry = this.connections.get(woningId);
-      const parameter = entry?.parametersByEntity.get(entityId);
-      if (!parameter) return;
-      handleStateChange({ woningId, parameter, newState, io }).catch((err) =>
-        console.error(`Failed to ingest reading for ${entityId}:`, err)
-      );
+      const parameters = entry?.parametersByEntity.get(entityId);
+      if (!parameters) return;
+      for (const parameter of parameters) {
+        handleStateChange({ woningId, parameter, newState, io }).catch((err) =>
+          console.error(`Failed to ingest reading for ${entityId}:`, err)
+        );
+      }
     });
 
     client.connect();
@@ -79,20 +81,24 @@ class HaConnectionManager {
     await Promise.all(
       states
         .filter((s) => entry.parametersByEntity.has(s.entity_id))
-        .map((s) =>
-          handleStateChange({
-            woningId,
-            parameter: entry.parametersByEntity.get(s.entity_id),
-            newState: s,
-            io,
-          })
+        .flatMap((s) =>
+          entry.parametersByEntity.get(s.entity_id).map((parameter) =>
+            handleStateChange({ woningId, parameter, newState: s, io })
+          )
         )
     );
   }
 
+  // A single HA entity can be mapped to more than one Parameter (e.g. once
+  // plain and once with `invert` set), so each entityId maps to an array.
   async _loadParameterMap(woningId) {
     const parameters = await Parameter.find({ woning: woningId });
-    return new Map(parameters.map((p) => [p.entityId, p]));
+    const byEntity = new Map();
+    for (const p of parameters) {
+      if (!byEntity.has(p.entityId)) byEntity.set(p.entityId, []);
+      byEntity.get(p.entityId).push(p);
+    }
+    return byEntity;
   }
 
   /** Refresh the entity->parameter map after parameters are added/removed. */
