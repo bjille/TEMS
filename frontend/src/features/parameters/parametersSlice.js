@@ -37,6 +37,21 @@ export const updateParameter = createAsyncThunk(
   }
 );
 
+export const copyParameter = createAsyncThunk(
+  'parameters/copy',
+  async ({ woningId, parameterId, targetWoningIds }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(
+        `/woningen/${woningId}/parameters/${parameterId}/copy`,
+        { targetWoningIds }
+      );
+      return data.results;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Kopiëren mislukt');
+    }
+  }
+);
+
 export const deleteParameter = createAsyncThunk(
   'parameters/delete',
   async ({ woningId, parameterId }, { rejectWithValue }) => {

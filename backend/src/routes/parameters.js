@@ -2,6 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const Parameter = require('../models/Parameter');
 const Reading = require('../models/Reading');
+const Woning = require('../models/Woning');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
@@ -115,6 +116,67 @@ router.patch(
       );
       if (!parameter) throw new ApiError(404, 'Parameter not found');
       res.json(parameter);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Copies this parameter's definition (entityId, type, label, settings — a
+// fresh document, not linked to this one) into one or more other woningen.
+// Always creates rather than upserting: since an entity can now be mapped
+// more than once per woning (see `invert`), matching an existing target
+// parameter to overwrite would be ambiguous.
+router.post(
+  '/:parameterId/copy',
+  requireSuperadmin,
+  [body('targetWoningIds').isArray({ min: 1 }), body('targetWoningIds.*').isMongoId()],
+  async (req, res, next) => {
+    try {
+      checkValidation(req);
+      const parameter = await Parameter.findOne({
+        _id: req.params.parameterId,
+        woning: req.params.woningId,
+      });
+      if (!parameter) throw new ApiError(404, 'Parameter not found');
+
+      const targetIds = [...new Set(req.body.targetWoningIds)].filter(
+        (id) => id !== req.params.woningId
+      );
+      const existingWoningen = await Woning.find({ _id: { $in: targetIds } }, '_id');
+      const existingIds = new Set(existingWoningen.map((w) => w._id.toString()));
+
+      const results = [];
+      for (const targetWoningId of targetIds) {
+        if (!existingIds.has(targetWoningId)) {
+          results.push({ woningId: targetWoningId, status: 'error', message: 'Woning niet gevonden' });
+          continue;
+        }
+        try {
+          const copy = await Parameter.create({
+            woning: targetWoningId,
+            entityId: parameter.entityId,
+            type: parameter.type,
+            label: parameter.label,
+            unit: parameter.unit,
+            icon: parameter.icon,
+            category: parameter.category,
+            controllable: parameter.controllable,
+            favorite: parameter.favorite,
+            invert: parameter.invert,
+            controlDomain: parameter.controlDomain,
+            options: parameter.options,
+            optionLabels: parameter.optionLabels,
+            createdBy: req.user._id,
+          });
+          await haConnectionManager.resubscribe(targetWoningId);
+          results.push({ woningId: targetWoningId, status: 'created', parameterId: copy._id });
+        } catch (err) {
+          results.push({ woningId: targetWoningId, status: 'error', message: err.message });
+        }
+      }
+
+      res.json({ results });
     } catch (err) {
       next(err);
     }

@@ -2,6 +2,8 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const DashboardChart = require('../models/DashboardChart');
 const Parameter = require('../models/Parameter');
+const Woning = require('../models/Woning');
+const { buildParameterRemap } = require('../services/parameterRemap');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
@@ -208,6 +210,82 @@ router.patch(
       ).populate(POPULATE_PATHS);
       if (!chart) throw new ApiError(404, 'Chart not found');
       res.json(chart);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Copies this chart into one or more other woningen. Every parameter it
+// references (series, flow roles, device breakdown) is remapped to the
+// equivalent parameter in the target woning by identity (entityId +
+// invert) — if any referenced parameter has no match there, that target is
+// skipped with an error instead of silently dropping a series. The copy
+// always starts off the target's dashboard (showOnDashboard: false) so it
+// can be reviewed before it appears there.
+router.post(
+  '/:chartId/copy',
+  requireSuperadmin,
+  [body('targetWoningIds').isArray({ min: 1 }), body('targetWoningIds.*').isMongoId()],
+  async (req, res, next) => {
+    try {
+      checkValidation(req);
+      const chart = await DashboardChart.findOne({
+        _id: req.params.chartId,
+        woning: req.params.woningId,
+      });
+      if (!chart) throw new ApiError(404, 'Chart not found');
+
+      const targetIds = [...new Set(req.body.targetWoningIds)].filter(
+        (id) => id !== req.params.woningId
+      );
+      const existingWoningen = await Woning.find({ _id: { $in: targetIds } }, '_id');
+      const existingIds = new Set(existingWoningen.map((w) => w._id.toString()));
+
+      const sourceParamIds = [
+        ...chart.parameters,
+        ...collectFlowRoleIds(chart.flowRoles),
+        ...chart.devices.map((d) => d.parameter),
+      ];
+
+      const results = [];
+      for (const targetWoningId of targetIds) {
+        if (!existingIds.has(targetWoningId)) {
+          results.push({ woningId: targetWoningId, status: 'error', message: 'Woning niet gevonden' });
+          continue;
+        }
+        const { map, missing } = await buildParameterRemap(sourceParamIds, targetWoningId);
+        if (missing.length > 0) {
+          results.push({
+            woningId: targetWoningId,
+            status: 'error',
+            message: `Ontbrekende parameter(s) in doelwoning: ${missing.join(', ')}`,
+          });
+          continue;
+        }
+        const copy = await DashboardChart.create({
+          woning: targetWoningId,
+          name: chart.name,
+          type: chart.type,
+          rangeHours: chart.rangeHours,
+          parameters: chart.parameters.map((id) => map.get(id.toString())),
+          flowRoles: {
+            pv: chart.flowRoles?.pv ? map.get(chart.flowRoles.pv.toString()) : undefined,
+            battery: chart.flowRoles?.battery ? map.get(chart.flowRoles.battery.toString()) : undefined,
+            grid: chart.flowRoles?.grid ? map.get(chart.flowRoles.grid.toString()) : undefined,
+          },
+          devices: chart.devices.map((d) => ({
+            parameter: map.get(d.parameter.toString()),
+            parent: d.parent ? map.get(d.parent.toString()) : null,
+          })),
+          circular: chart.circular,
+          showOnDashboard: false,
+          createdBy: req.user._id,
+        });
+        results.push({ woningId: targetWoningId, status: 'created', chartId: copy._id });
+      }
+
+      res.json({ results });
     } catch (err) {
       next(err);
     }

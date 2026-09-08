@@ -37,6 +37,20 @@ export const updateChart = createAsyncThunk(
   }
 );
 
+export const copyChart = createAsyncThunk(
+  'charts/copy',
+  async ({ woningId, chartId, targetWoningIds }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(`/woningen/${woningId}/charts/${chartId}/copy`, {
+        targetWoningIds,
+      });
+      return data.results;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Kopiëren mislukt');
+    }
+  }
+);
+
 export const deleteChart = createAsyncThunk(
   'charts/delete',
   async ({ woningId, chartId }, { rejectWithValue }) => {

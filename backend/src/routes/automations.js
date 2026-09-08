@@ -3,11 +3,14 @@ const cron = require('node-cron');
 const { body, validationResult } = require('express-validator');
 const Automation = require('../models/Automation');
 const Parameter = require('../models/Parameter');
+const Woning = require('../models/Woning');
+const WoningUser = require('../models/WoningUser');
 const { authenticate } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { OPERATORS } = require('../models/Automation');
 const { automationEngine } = require('../services/automationEngine');
+const { buildParameterRemap } = require('../services/parameterRemap');
 
 const router = express.Router({ mergeParams: true });
 
@@ -144,6 +147,96 @@ router.delete('/:automationId', authorizeWoning(['owner']), async (req, res, nex
     next(err);
   }
 });
+
+// Copies this automation into one or more other woningen. Its condition and
+// action parameters are remapped to the equivalent parameter in the target
+// woning by identity (entityId + invert) — a target missing any of them is
+// skipped with an error rather than silently pointing at nothing. Requires
+// 'owner' (or superadmin) on *both* the source and each target woning, since
+// unlike parameters/charts this isn't a superadmin-only admin resource.
+router.post(
+  '/:automationId/copy',
+  authorizeWoning(['owner']),
+  [body('targetWoningIds').isArray({ min: 1 }), body('targetWoningIds.*').isMongoId()],
+  async (req, res, next) => {
+    try {
+      checkValidation(req);
+      const automation = await Automation.findOne({
+        _id: req.params.automationId,
+        woning: req.params.woningId,
+      });
+      if (!automation) throw new ApiError(404, 'Automation not found');
+
+      const targetIds = [...new Set(req.body.targetWoningIds)].filter(
+        (id) => id !== req.params.woningId
+      );
+      const existingWoningen = await Woning.find({ _id: { $in: targetIds } }, '_id');
+      const existingIds = new Set(existingWoningen.map((w) => w._id.toString()));
+
+      const sourceParamIds = [
+        ...automation.conditions.map((c) => c.parameter),
+        automation.action.parameter,
+      ];
+
+      const results = [];
+      for (const targetWoningId of targetIds) {
+        if (!existingIds.has(targetWoningId)) {
+          results.push({ woningId: targetWoningId, status: 'error', message: 'Woning niet gevonden' });
+          continue;
+        }
+        if (req.user.role !== 'superadmin') {
+          const link = await WoningUser.findOne({ user: req.user._id, woning: targetWoningId });
+          if (!link || link.role !== 'owner') {
+            results.push({ woningId: targetWoningId, status: 'error', message: 'Geen rechten op deze woning' });
+            continue;
+          }
+        }
+        const { map, missing } = await buildParameterRemap(sourceParamIds, targetWoningId);
+        if (missing.length > 0) {
+          results.push({
+            woningId: targetWoningId,
+            status: 'error',
+            message: `Ontbrekende parameter(s) in doelwoning: ${missing.join(', ')}`,
+          });
+          continue;
+        }
+        const copy = await Automation.create({
+          woning: targetWoningId,
+          name: automation.name,
+          enabled: automation.enabled,
+          trigger: {
+            type: automation.trigger.type,
+            cronExpression: automation.trigger.cronExpression,
+            timerMode: automation.trigger.timerMode,
+            timerClockTime: automation.trigger.timerClockTime,
+            timerDurationMinutes: automation.trigger.timerDurationMinutes,
+            // Never copy an in-progress countdown into another woning.
+            timerArmed: false,
+            timerTargetAt: undefined,
+          },
+          conditions: automation.conditions.map((c) => ({
+            parameter: map.get(c.parameter.toString()),
+            operator: c.operator,
+            value: c.value,
+          })),
+          action: {
+            parameter: map.get(automation.action.parameter.toString()),
+            action: automation.action.action,
+            payload: automation.action.payload,
+          },
+          cooldownMinutes: automation.cooldownMinutes,
+          createdBy: req.user._id,
+        });
+        await automationEngine.refreshWoning(targetWoningId);
+        results.push({ woningId: targetWoningId, status: 'created', automationId: copy._id });
+      }
+
+      res.json({ results });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 // --- Dashboard timer controls ---------------------------------------------
 // These are deliberately available to any woning member (not just 'owner',

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
-import { fetchCharts, createChart, updateChart, deleteChart, selectChartsForWoning } from '../charts/chartsSlice';
+import { fetchCharts, createChart, updateChart, deleteChart, copyChart, selectChartsForWoning } from '../charts/chartsSlice';
 import { groupByCategory, collectCategories, categoryLabel } from '../parameters/parameterCategories';
+import CopyToWoningen from '../../components/CopyToWoningen';
 
 const TYPE_OPTIONS = [
   { value: 'line', label: 'Lijn' },
@@ -279,6 +280,13 @@ export default function AdminCharts() {
                     <button className="btn btn-danger" onClick={() => handleDelete(c._id)}>
                       Verwijderen
                     </button>
+                    <CopyToWoningen
+                      woningen={woningen}
+                      currentWoningId={woningId}
+                      onCopy={(targetWoningIds) =>
+                        dispatch(copyChart({ woningId, chartId: c._id, targetWoningIds })).unwrap()
+                      }
+                    />
                   </td>
                 </tr>
               ))}

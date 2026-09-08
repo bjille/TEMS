@@ -6,11 +6,13 @@ import {
   createParameter,
   updateParameter,
   deleteParameter,
+  copyParameter,
   selectParametersForWoning,
 } from '../parameters/parametersSlice';
 import { colorForType, CATEGORICAL } from '../../palette';
 import { categoryLabel, collectCategories, sortParameters } from '../parameters/parameterCategories';
 import { fetchParameterCategories, selectParameterCategories } from '../parameters/parameterCategoriesSlice';
+import CopyToWoningen from '../../components/CopyToWoningen';
 
 const TYPE_OPTIONS = [
   'battery_soc',
@@ -293,6 +295,15 @@ export default function AdminParameters() {
                     <button className="btn btn-danger" onClick={() => handleDelete(p._id)}>
                       Verwijderen
                     </button>
+                    <CopyToWoningen
+                      woningen={woningen}
+                      currentWoningId={woningId}
+                      onCopy={(targetWoningIds) =>
+                        dispatch(
+                          copyParameter({ woningId, parameterId: p._id, targetWoningIds })
+                        ).unwrap()
+                      }
+                    />
                   </td>
                 </tr>
               ))}

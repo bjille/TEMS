@@ -37,6 +37,21 @@ export const updateAutomation = createAsyncThunk(
   }
 );
 
+export const copyAutomation = createAsyncThunk(
+  'automations/copy',
+  async ({ woningId, automationId, targetWoningIds }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(
+        `/woningen/${woningId}/automations/${automationId}/copy`,
+        { targetWoningIds }
+      );
+      return data.results;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Kopiëren mislukt');
+    }
+  }
+);
+
 export const deleteAutomation = createAsyncThunk(
   'automations/delete',
   async ({ woningId, automationId }, { rejectWithValue }) => {

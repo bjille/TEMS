@@ -4,12 +4,14 @@ import {
   fetchAutomations,
   updateAutomation,
   deleteAutomation,
+  copyAutomation,
   selectAutomationsForWoning,
 } from './automationsSlice';
 import { fetchParameters } from '../parameters/parametersSlice';
 import { selectSelectedWoningId, selectWoningen } from '../woningen/woningenSlice';
 import AutomationForm from './AutomationForm';
 import { DAY_LABELS, parseCronExpression } from './cronUtils';
+import CopyToWoningen from '../../components/CopyToWoningen';
 
 const OPERATOR_LABELS = { gt: '>', gte: '≥', lt: '<', lte: '≤', eq: '=', neq: '≠' };
 const ACTION_LABELS = { turn_on: 'inschakelen', turn_off: 'uitschakelen' };
@@ -162,6 +164,15 @@ export default function AutomationsPage() {
                   <button className="btn btn-danger" onClick={() => handleDelete(automation._id)}>
                     Verwijderen
                   </button>
+                  <CopyToWoningen
+                    woningen={woningen}
+                    currentWoningId={woningId}
+                    onCopy={(targetWoningIds) =>
+                      dispatch(
+                        copyAutomation({ woningId, automationId: automation._id, targetWoningIds })
+                      ).unwrap()
+                    }
+                  />
                 </div>
               )}
             </div>
