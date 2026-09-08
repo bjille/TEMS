@@ -18,30 +18,60 @@ function checkValidation(req) {
   if (!errors.isEmpty()) throw new ApiError(400, 'Validation failed', errors.array());
 }
 
-// Collapses raw readings into one point per hour (averaging whatever values
-// fall in that hour), filling every hour in [start, end] — even ones with no
-// readings — with 0. Used for the stacked hourly bar chart, where every
-// series (device) needs the exact same set of x-values to stack correctly.
+// Collapses raw readings into one point per hour, filling every hour in
+// [start, end] — even ones with no readings — with 0. Used for the stacked
+// hourly bar chart, where every series (device) needs the exact same set of
+// x-values to stack correctly.
+//
+// HA sensors only report on change (zero-order hold: a value holds until the
+// next reading), and how often a device toggles is unrelated to how long it
+// actually draws power — a boiler cycling on/off reports far more readings
+// while it's *on* than a device that just sits at a steady wattage. A plain
+// per-bucket average (sum of values / number of readings) over-weights
+// whichever device happens to report more often, not whichever one actually
+// consumed more. This instead spreads each reading's value across the wall-
+// clock time it was in effect (up to the next reading, or `end`) and
+// averages that per hour, so a device's weight in the average matches how
+// long it actually held that value.
 function bucketHourly(readings, start, end) {
-  const sums = new Map();
-  for (const r of readings) {
-    const hourStart = new Date(r.timestamp);
-    hourStart.setMinutes(0, 0, 0);
-    const key = hourStart.getTime();
-    const bucket = sums.get(key) || { sum: 0, count: 0 };
-    bucket.sum += r.value;
-    bucket.count += 1;
-    sums.set(key, bucket);
+  const bucketMs = 3600 * 1000;
+  const startMs = new Date(start).setMinutes(0, 0, 0);
+  const endMs = end.getTime();
+
+  const sorted = readings
+    .slice()
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  const weighted = new Map(); // bucketStartMs -> { weightedSum, coveredMs }
+
+  function addSpan(value, fromMs, toMs) {
+    let cursor = Math.max(fromMs, startMs);
+    const spanEnd = Math.min(toMs, endMs);
+    while (cursor < spanEnd) {
+      const bucketStartMs = new Date(cursor).setMinutes(0, 0, 0);
+      const bucketEndMs = bucketStartMs + bucketMs;
+      const segmentEndMs = Math.min(spanEnd, bucketEndMs);
+      const durationMs = segmentEndMs - cursor;
+      const entry = weighted.get(bucketStartMs) || { weightedSum: 0, coveredMs: 0 };
+      entry.weightedSum += value * durationMs;
+      entry.coveredMs += durationMs;
+      weighted.set(bucketStartMs, entry);
+      cursor = segmentEndMs;
+    }
+  }
+
+  for (let i = 0; i < sorted.length; i++) {
+    const readingMs = new Date(sorted[i].timestamp).getTime();
+    const nextMs = i + 1 < sorted.length ? new Date(sorted[i + 1].timestamp).getTime() : endMs;
+    addSpan(sorted[i].value, readingMs, nextMs);
   }
 
   const bucketed = [];
-  const cursor = new Date(start);
-  cursor.setMinutes(0, 0, 0);
-  for (let t = cursor.getTime(); t <= end.getTime(); t += 3600 * 1000) {
-    const bucket = sums.get(t);
+  for (let t = startMs; t <= endMs; t += bucketMs) {
+    const entry = weighted.get(t);
     bucketed.push({
       timestamp: new Date(t).toISOString(),
-      value: bucket ? Math.round((bucket.sum / bucket.count) * 10) / 10 : 0,
+      value: entry && entry.coveredMs > 0 ? Math.round((entry.weightedSum / entry.coveredMs) * 10) / 10 : 0,
     });
   }
   return bucketed;
