@@ -24,6 +24,11 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // For the 7-days/30-days presets, plotting every raw reading is both slow
+  // and unreadable — show total consumption per day instead. A custom start
+  // date has no matching preset, so it keeps the raw view.
+  const isDailyView = !customFrom && rangeHours > 24;
+
   useEffect(() => {
     if (!parameter) dispatch(fetchParameters(woningId));
   }, [woningId, parameter, dispatch]);
@@ -43,7 +48,7 @@ export default function HistoryPage() {
           ? new Date(customFrom).toISOString()
           : new Date(Date.now() - rangeHours * 3600 * 1000).toISOString();
         const { data } = await api.get(`/woningen/${woningId}/readings`, {
-          params: { parameterId, from },
+          params: { parameterId, from, ...(isDailyView ? { interval: 'day' } : {}) },
         });
         if (!cancelled) setReadings(data);
       } catch (err) {
@@ -56,7 +61,7 @@ export default function HistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [woningId, parameterId, rangeHours, customFrom]);
+  }, [woningId, parameterId, rangeHours, customFrom, isDailyView]);
 
   const color = useMemo(() => colorForType(parameter?.type), [parameter]);
 
@@ -97,7 +102,12 @@ export default function HistoryPage() {
       {error && <p className="error-text">{error}</p>}
       {!loading && !error && (
         <div className="card">
-          <HistoryChart data={readings} color={color} unit={parameter?.unit} />
+          <HistoryChart
+            data={readings}
+            color={color}
+            unit={isDailyView ? 'kWh' : parameter?.unit}
+            daily={isDailyView}
+          />
         </div>
       )}
     </div>

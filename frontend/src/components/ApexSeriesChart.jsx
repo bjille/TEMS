@@ -20,11 +20,14 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
       try {
         const from = new Date(Date.now() - chart.rangeHours * 3600 * 1000).toISOString();
         // Bar charts show one stacked bar per hour (each device's average
-        // power that hour), so ask the backend to pre-aggregate to hourly
-        // points instead of fetching the full-resolution history — for a
-        // busy sensor that's the difference between ~24 points and tens of
-        // thousands, which is what made this chart take 15-20s to render.
-        const params = chart.type === 'bar' ? { interval: 'hour' } : {};
+        // power that hour), so ask the backend to pre-aggregate instead of
+        // fetching the full-resolution history — for a busy sensor that's
+        // the difference between a handful of points and tens of thousands,
+        // which is what made this chart take 15-20s to render. Beyond a day
+        // an hourly bar per device is too dense to read, so switch to one
+        // bar per day showing that day's total consumption (kWh) instead.
+        const isDailyBar = chart.type === 'bar' && chart.rangeHours > 24;
+        const params = chart.type === 'bar' ? { interval: isDailyBar ? 'day' : 'hour' } : {};
         const results = await Promise.all(
           chart.parameters.map((p) =>
             api.get(`/woningen/${woningId}/readings`, { params: { parameterId: p._id, from, ...params } })
@@ -33,7 +36,7 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
         if (cancelled) return;
         setSeries(
           chart.parameters.map((p, i) => ({
-            name: p.unit ? `${p.label} (${p.unit})` : p.label,
+            name: isDailyBar ? `${p.label} (kWh)` : p.unit ? `${p.label} (${p.unit})` : p.label,
             data: results[i].data
               .filter((r) => typeof r.value === 'number')
               .map((r) => [new Date(r.timestamp).getTime(), r.value]),
