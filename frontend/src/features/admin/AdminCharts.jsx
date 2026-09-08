@@ -82,14 +82,14 @@ export default function AdminCharts() {
     () => collectCategories(chartableParameters),
     [chartableParameters]
   );
-  const filteredChartableParameters = parameterCategoryFilter
-    ? chartableParameters.filter((p) => categoryLabel(p.category) === parameterCategoryFilter)
-    : chartableParameters;
   const charts = useSelector(selectChartsForWoning(woningId));
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
   const [parameterCategoryFilter, setParameterCategoryFilter] = useState('');
+  const filteredChartableParameters = parameterCategoryFilter
+    ? chartableParameters.filter((p) => categoryLabel(p.category) === parameterCategoryFilter)
+    : chartableParameters;
 
   const isEnergyFlow = form.type === 'energyflow';
   const canSubmit = isEnergyFlow
