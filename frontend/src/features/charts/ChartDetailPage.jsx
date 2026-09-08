@@ -6,6 +6,7 @@ import { fetchParameters } from '../parameters/parametersSlice';
 import { useLiveReadings } from '../parameters/useLiveReadings';
 import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
+import PieTotalsChart from '../../components/PieTotalsChart';
 
 const RANGES = [
   { label: '24 uur', hours: 24 },
@@ -97,6 +98,8 @@ export default function ChartDetailPage() {
       <div className="card">
         {isEnergyFlow ? (
           <EnergyFlowChart chart={chart} woningId={woningId} height={480} />
+        ) : chart.type === 'pie' ? (
+          <PieTotalsChart chart={displayChart} woningId={woningId} height={480} />
         ) : (
           <ApexSeriesChart chart={displayChart} woningId={woningId} height={480} />
         )}

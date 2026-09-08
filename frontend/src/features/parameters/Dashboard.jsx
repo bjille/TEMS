@@ -10,6 +10,7 @@ import Tile from '../../components/Tile';
 import ControlWidget from '../control/ControlWidget';
 import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
+import PieTotalsChart from '../../components/PieTotalsChart';
 import { WONING_STATUS_COLOR } from '../../palette';
 import { collectCategories, groupByCategory, categoryLabel } from './parameterCategories';
 import { fetchParameterCategories, selectParameterCategories } from './parameterCategoriesSlice';
@@ -83,6 +84,8 @@ function DashboardCharts({ woningId }) {
           </div>
           {chart.type === 'energyflow' ? (
             <EnergyFlowChart chart={chart} woningId={woningId} />
+          ) : chart.type === 'pie' ? (
+            <PieTotalsChart chart={chart} woningId={woningId} />
           ) : (
             <ApexSeriesChart chart={chart} woningId={woningId} />
           )}

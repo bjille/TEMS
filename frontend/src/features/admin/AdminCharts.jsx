@@ -9,6 +9,7 @@ const TYPE_OPTIONS = [
   { value: 'line', label: 'Lijn' },
   { value: 'area', label: 'Vlak' },
   { value: 'bar', label: 'Balken' },
+  { value: 'pie', label: 'Cirkeldiagram (totalen)' },
   { value: 'energyflow', label: 'Energieflow' },
 ];
 
@@ -306,6 +307,12 @@ export default function AdminCharts() {
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
                   Toont de actuele (live) vermogens als Sankey-diagram — geen periode, werkt via de
                   live metingen.
+                </p>
+              )}
+              {form.type === 'pie' && (
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Toont het totale verbruik (kWh) per gekozen parameter over de hele periode, als
+                  aandeel van het geheel.
                 </p>
               )}
             </div>
