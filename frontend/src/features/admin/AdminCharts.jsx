@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
 import { fetchCharts, createChart, updateChart, deleteChart, selectChartsForWoning } from '../charts/chartsSlice';
-import { groupByCategory } from '../parameters/parameterCategories';
+import { groupByCategory, collectCategories, categoryLabel } from '../parameters/parameterCategories';
 
 const TYPE_OPTIONS = [
   { value: 'line', label: 'Lijn' },
@@ -78,10 +78,18 @@ export default function AdminCharts() {
     () => parameters.filter((p) => !isSwitchEntity(p)),
     [parameters]
   );
+  const parameterCategoryOptions = useMemo(
+    () => collectCategories(chartableParameters),
+    [chartableParameters]
+  );
+  const filteredChartableParameters = parameterCategoryFilter
+    ? chartableParameters.filter((p) => categoryLabel(p.category) === parameterCategoryFilter)
+    : chartableParameters;
   const charts = useSelector(selectChartsForWoning(woningId));
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState(null);
+  const [parameterCategoryFilter, setParameterCategoryFilter] = useState('');
 
   const isEnergyFlow = form.type === 'energyflow';
   const canSubmit = isEnergyFlow
@@ -101,6 +109,7 @@ export default function AdminCharts() {
       dispatch(fetchParameters(woningId));
       dispatch(fetchCharts(woningId));
     }
+    setParameterCategoryFilter('');
   }, [woningId, dispatch]);
 
   function toggleParameter(id) {
@@ -429,23 +438,49 @@ export default function AdminCharts() {
                 </div>
                 <div className="form-field">
                   <label>Parameters</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                    {chartableParameters.map((p) => (
-                      <label key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <input
-                          type="checkbox"
-                          checked={form.parameterIds.includes(p._id)}
-                          onChange={() => toggleParameter(p._id)}
-                        />
-                        {p.label}
-                      </label>
-                    ))}
-                    {chartableParameters.length === 0 && (
-                      <p className="muted" style={{ margin: 0 }}>
-                        Deze woning heeft nog geen parameters.
-                      </p>
-                    )}
-                  </div>
+                  {parameterCategoryOptions.length > 0 && (
+                    <select
+                      value={parameterCategoryFilter}
+                      onChange={(e) => setParameterCategoryFilter(e.target.value)}
+                      style={{ marginBottom: 10, maxWidth: 260 }}
+                    >
+                      <option value="">Alle categorieën</option>
+                      {parameterCategoryOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {groupByCategory(filteredChartableParameters).map(({ category, parameters: groupParams }) => (
+                    <div key={category} style={{ marginBottom: 10 }}>
+                      <div className="muted" style={{ fontSize: '0.8em', fontWeight: 600, marginBottom: 4 }}>
+                        {category}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                        {groupParams.map((p) => (
+                          <label key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              type="checkbox"
+                              checked={form.parameterIds.includes(p._id)}
+                              onChange={() => toggleParameter(p._id)}
+                            />
+                            {p.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {chartableParameters.length === 0 && (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Deze woning heeft nog geen parameters.
+                    </p>
+                  )}
+                  {chartableParameters.length > 0 && filteredChartableParameters.length === 0 && (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Geen parameters in deze categorie.
+                    </p>
+                  )}
                 </div>
               </>
             )}
