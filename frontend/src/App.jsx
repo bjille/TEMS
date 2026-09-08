@@ -13,8 +13,6 @@ import AdminWoningen from './features/admin/AdminWoningen';
 import AdminParameters from './features/admin/AdminParameters';
 import AdminCharts from './features/admin/AdminCharts';
 import AdminUsers from './features/admin/AdminUsers';
-import AdminGlobalAutomations from './features/admin/AdminGlobalAutomations';
-import AdminGlobalParameters from './features/admin/AdminGlobalParameters';
 import AdminParameterCategories from './features/admin/AdminParameterCategories';
 
 export default function App() {
@@ -38,8 +36,6 @@ export default function App() {
               <Route path="parameters" element={<AdminParameters />} />
               <Route path="charts" element={<AdminCharts />} />
               <Route path="users" element={<AdminUsers />} />
-              <Route path="global-automations" element={<AdminGlobalAutomations />} />
-              <Route path="global-parameters" element={<AdminGlobalParameters />} />
               <Route path="parameter-categories" element={<AdminParameterCategories />} />
             </Route>
           </Route>

@@ -1,7 +1,6 @@
 const Reading = require('../models/Reading');
 const Woning = require('../models/Woning');
 const { automationEngine } = require('./automationEngine');
-const { globalAutomationEngine } = require('./globalAutomationEngine');
 
 /**
  * Persists an incoming Home Assistant state change as a Reading and
@@ -30,7 +29,6 @@ async function handleStateChange({ woningId, parameter, newState, io }) {
   });
 
   await automationEngine.onReading(woningId, parameter._id);
-  await globalAutomationEngine.onReading(woningId, parameter);
 }
 
 function coerceValue(rawState) {

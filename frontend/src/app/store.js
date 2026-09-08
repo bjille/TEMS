@@ -4,8 +4,6 @@ import woningenReducer from '../features/woningen/woningenSlice';
 import parametersReducer from '../features/parameters/parametersSlice';
 import adminUsersReducer from '../features/admin/adminUsersSlice';
 import automationsReducer from '../features/automations/automationsSlice';
-import globalAutomationsReducer from '../features/admin/globalAutomationsSlice';
-import globalParametersReducer from '../features/admin/globalParametersSlice';
 import parameterCategoriesReducer from '../features/parameters/parameterCategoriesSlice';
 import chartsReducer from '../features/charts/chartsSlice';
 import { onTokensRefresh } from '../services/api';
@@ -17,8 +15,6 @@ export const store = configureStore({
     parameters: parametersReducer,
     adminUsers: adminUsersReducer,
     automations: automationsReducer,
-    globalAutomations: globalAutomationsReducer,
-    globalParameters: globalParametersReducer,
     parameterCategories: parameterCategoriesReducer,
     charts: chartsReducer,
   },

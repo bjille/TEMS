@@ -43,9 +43,6 @@ const parameterSchema = new mongoose.Schema(
     // Optional override for the HA service domain used to actuate this parameter.
     // Normally left empty: the domain is derived from entityId (e.g. "light.x" -> "light").
     controlDomain: { type: String, trim: true },
-    // Set when this Parameter was stamped out from a GlobalParameter template
-    // (see globalParameterService); lets edits to the template propagate here.
-    globalParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'GlobalParameter' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

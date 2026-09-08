@@ -18,12 +18,6 @@ export default function AdminHome() {
           <NavLink to="users" className="btn">
             Gebruikers
           </NavLink>
-          <NavLink to="global-automations" className="btn">
-            Globale automatiseringen
-          </NavLink>
-          <NavLink to="global-parameters" className="btn">
-            Globale parameters
-          </NavLink>
           <NavLink to="parameter-categories" className="btn">
             Categorieën
           </NavLink>

@@ -2,7 +2,6 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const ParameterCategory = require('../models/ParameterCategory');
 const Parameter = require('../models/Parameter');
-const GlobalParameter = require('../models/GlobalParameter');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
 const { ApiError } = require('../middleware/errorHandler');
 
@@ -62,7 +61,6 @@ router.patch(
         await category.save();
         // Keep every parameter already tagged with the old name in sync.
         await Parameter.updateMany({ category: oldName }, { category: newName });
-        await GlobalParameter.updateMany({ category: oldName }, { category: newName });
       }
       res.json(category);
     } catch (err) {
@@ -79,7 +77,6 @@ router.delete('/:categoryId', authenticate, requireSuperadmin, async (req, res, 
     // Parameters that used this category fall back to "Overig" rather than
     // keeping a name that no longer exists in the managed list.
     await Parameter.updateMany({ category: category.name }, { category: '' });
-    await GlobalParameter.updateMany({ category: category.name }, { category: '' });
     res.status(204).send();
   } catch (err) {
     next(err);
