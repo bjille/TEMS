@@ -8,6 +8,7 @@ import HistoryPage from './features/history/HistoryPage';
 import ChartDetailPage from './features/charts/ChartDetailPage';
 import ControlPage from './features/control/ControlPage';
 import AutomationsPage from './features/automations/AutomationsPage';
+import SmartChargePage from './features/smartCharge/SmartChargePage';
 import AdminHome from './features/admin/AdminHome';
 import AdminWoningen from './features/admin/AdminWoningen';
 import AdminParameters from './features/admin/AdminParameters';
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/woningen/:woningId/charts/:chartId" element={<ChartDetailPage />} />
           <Route path="/control" element={<ControlPage />} />
           <Route path="/automations" element={<AutomationsPage />} />
+          <Route path="/smart-charge" element={<SmartChargePage />} />
 
           <Route element={<ProtectedRoute requireSuperadmin />}>
             <Route path="/admin" element={<AdminHome />}>

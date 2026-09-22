@@ -20,6 +20,7 @@ export default function Layout() {
           </NavLink>
           <NavLink to="/control">Besturing</NavLink>
           <NavLink to="/automations">Automatiseringen</NavLink>
+          <NavLink to="/smart-charge">Slim laden</NavLink>
           {user?.role === 'superadmin' && <NavLink to="/admin">Admin</NavLink>}
         </nav>
         <div className="layout-actions">

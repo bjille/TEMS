@@ -9,8 +9,9 @@ const commandLogSchema = new mongoose.Schema(
     payload: { type: mongoose.Schema.Types.Mixed },
     result: { type: String, enum: ['success', 'error'], required: true },
     error: { type: String },
-    source: { type: String, enum: ['manual', 'automation'], default: 'manual' },
+    source: { type: String, enum: ['manual', 'automation', 'smart_charge'], default: 'manual' },
     automation: { type: mongoose.Schema.Types.ObjectId, ref: 'Automation' },
+    smartChargePlan: { type: mongoose.Schema.Types.ObjectId, ref: 'SmartChargePlan' },
   },
   { timestamps: true }
 );

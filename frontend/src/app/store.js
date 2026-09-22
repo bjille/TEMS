@@ -6,6 +6,7 @@ import adminUsersReducer from '../features/admin/adminUsersSlice';
 import automationsReducer from '../features/automations/automationsSlice';
 import parameterCategoriesReducer from '../features/parameters/parameterCategoriesSlice';
 import chartsReducer from '../features/charts/chartsSlice';
+import smartChargeReducer from '../features/smartCharge/smartChargeSlice';
 import { onTokensRefresh } from '../services/api';
 
 export const store = configureStore({
@@ -17,6 +18,7 @@ export const store = configureStore({
     automations: automationsReducer,
     parameterCategories: parameterCategoriesReducer,
     charts: chartsReducer,
+    smartCharge: smartChargeReducer,
   },
 });
 

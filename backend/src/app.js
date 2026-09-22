@@ -13,6 +13,7 @@ const readingsRoutes = require('./routes/readings');
 const controlRoutes = require('./routes/control');
 const automationsRoutes = require('./routes/automations');
 const chartsRoutes = require('./routes/charts');
+const smartChargeRoutes = require('./routes/smartCharge');
 const adminUsersRoutes = require('./routes/adminUsers');
 const parameterCategoriesRoutes = require('./routes/parameterCategories');
 
@@ -49,6 +50,7 @@ function createApp() {
   app.use('/api/woningen/:woningId/control', controlRoutes);
   app.use('/api/woningen/:woningId/automations', automationsRoutes);
   app.use('/api/woningen/:woningId/charts', chartsRoutes);
+  app.use('/api/woningen/:woningId/smart-charge', smartChargeRoutes);
   app.use('/api/admin/users', adminUsersRoutes);
   app.use('/api/parameter-categories', parameterCategoriesRoutes);
 
