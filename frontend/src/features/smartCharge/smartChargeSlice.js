@@ -87,9 +87,10 @@ const smartChargeSlice = createSlice({
   },
 });
 
-// update/toggle both return the freshly populated plan, but not its `status`
-// (only the list endpoint computes that) — keep whatever status the plan
-// already had in the store rather than dropping it until the next refresh.
+// create/update/toggle all return the plan with a freshly recomputed
+// `status` (the backend recalculates right away on any change, rather than
+// waiting for the next engine tick), so this simply replaces the stored
+// entry with the response as-is.
 function applyPlanUpdate(state, action) {
   const { woningId, plan } = action.payload;
   const list = state.byWoning[woningId];

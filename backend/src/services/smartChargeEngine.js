@@ -78,7 +78,13 @@ async function evaluatePlan(plan) {
   const priceParameter = plan.priceParameter._id
     ? plan.priceParameter
     : await Parameter.findById(plan.priceParameter);
-  const forecast = woning && priceParameter ? await fetchPriceForecast(priceParameter, woning) : null;
+  // Never let an HA outage throw out of here: every caller (the tick, the
+  // read-only status routes, and now the "recalculate after a config
+  // change" path) needs a plain ready:false instead of an exception to
+  // handle gracefully — a create/update request should still return the
+  // saved plan even when HA happens to be unreachable at that moment.
+  const forecast =
+    woning && priceParameter ? await fetchPriceForecast(priceParameter, woning).catch(() => null) : null;
 
   if (currentSocPercent === null || solarRemainingKwh === null || !forecast) {
     return {
@@ -149,35 +155,47 @@ class SmartChargeEngine {
       'chargeSwitchParameter',
     ]);
     for (const plan of plans) {
-      await this._evaluateAndAct(plan).catch((err) =>
+      await this.evaluateAndAct(plan).catch((err) =>
         console.error(`Smart charge plan ${plan._id} failed:`, err)
       );
     }
   }
 
-  async _evaluateAndAct(plan) {
-    const { haConnectionManager } = require('./haConnectionManager'); // deferred: see AutomationEngine.runAction
-
+  // Computes a plan's current status and, only when it's enabled, brings
+  // chargeSwitchParameter's actual HA state in line with it. Called both
+  // from the periodic tick (already filtered to enabled plans) and,
+  // directly, right after a plan is created/edited/toggled — a config
+  // change shouldn't have to wait for the next tick before the
+  // recommendation (and, if enabled, the switch) reflects it. The `enabled`
+  // check therefore lives here rather than only in the tick's query, so a
+  // disabled plan can never be actuated no matter which caller reaches it.
+  async evaluateAndAct(plan) {
     const status = await evaluatePlan(plan);
     plan.lastEvaluatedAt = new Date();
 
     if (!status.ready) {
       plan.lastError = status.reason;
       await plan.save();
-      return;
+      return status;
     }
+    plan.lastError = undefined;
+
+    if (!plan.enabled) {
+      await plan.save();
+      return status;
+    }
+
+    const { haConnectionManager } = require('./haConnectionManager'); // deferred: see AutomationEngine.runAction
 
     const switchParameter = plan.chargeSwitchParameter;
     const currentSwitchValue = await latestValue(switchParameter._id);
     const currentlyOn = currentSwitchValue === 'on';
     const desiredOn = status.shouldChargeNow;
 
-    plan.lastError = undefined;
-
     if (currentlyOn === desiredOn) {
       plan.lastAction = desiredOn ? 'on' : 'off';
       await plan.save();
-      return;
+      return status;
     }
 
     let result = 'success';
@@ -208,9 +226,17 @@ class SmartChargeEngine {
       source: 'smart_charge',
       smartChargePlan: plan._id,
     }).catch((logErr) => console.error('Failed to write smart-charge command log', logErr));
+
+    return status;
   }
 }
 
 const smartChargeEngine = new SmartChargeEngine();
 
-module.exports = { smartChargeEngine, SmartChargeEngine, computeChargePlan, evaluatePlan };
+module.exports = {
+  smartChargeEngine,
+  SmartChargeEngine,
+  computeChargePlan,
+  evaluatePlan,
+  SMART_CHARGE_POPULATE_PATHS: ['socParameter', 'solarRemainingParameter', 'priceParameter', 'chargeSwitchParameter'],
+};

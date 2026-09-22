@@ -5,11 +5,14 @@ const Parameter = require('../models/Parameter');
 const { authenticate } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
-const { evaluatePlan } = require('../services/smartChargeEngine');
+const { smartChargeEngine, evaluatePlan } = require('../services/smartChargeEngine');
 
 const router = express.Router({ mergeParams: true });
 
-const POPULATE_FIELDS = 'label unit type entityId';
+// Includes controlDomain (unlike the display-only fields alone) because
+// evaluateAndAct needs it to know which HA service domain to call for
+// chargeSwitchParameter.
+const POPULATE_FIELDS = 'label unit type entityId controlDomain';
 const POPULATE_PATHS = [
   { path: 'socParameter', select: POPULATE_FIELDS },
   { path: 'solarRemainingParameter', select: POPULATE_FIELDS },
@@ -99,7 +102,11 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
     });
 
     const populated = await plan.populate(POPULATE_PATHS);
-    res.status(201).json(populated);
+    // A fresh plan defaults to enabled:false, so this only computes the
+    // recommendation (never actuates) — but it means the very first view
+    // of a new plan already shows a real status instead of "laden...".
+    const status = await smartChargeEngine.evaluateAndAct(populated);
+    res.status(201).json({ ...populated.toObject(), status });
   } catch (err) {
     next(err);
   }
@@ -130,7 +137,13 @@ router.patch(
         { new: true, runValidators: true }
       ).populate(POPULATE_PATHS);
       if (!plan) throw new ApiError(404, 'Smart charge plan not found');
-      res.json(plan);
+
+      // Recompute (and, if this plan is enabled, act on) right away rather
+      // than leaving the old recommendation showing until the next tick —
+      // changing which parameter feeds the plan, or its capacity/target/
+      // power, changes what the plan should now be doing.
+      const status = await smartChargeEngine.evaluateAndAct(plan);
+      res.json({ ...plan.toObject(), status });
     } catch (err) {
       next(err);
     }
@@ -157,7 +170,11 @@ router.patch(
         { new: true }
       ).populate(POPULATE_PATHS);
       if (!plan) throw new ApiError(404, 'Smart charge plan not found');
-      res.json(plan);
+
+      // Switching on shouldn't wait up to 10 minutes for the next tick
+      // before the switch actually follows the plan.
+      const status = await smartChargeEngine.evaluateAndAct(plan);
+      res.json({ ...plan.toObject(), status });
     } catch (err) {
       next(err);
     }
