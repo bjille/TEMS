@@ -473,6 +473,12 @@ export default function AdminCharts() {
                     de sensor eerst toe onder Parameters.
                   </p>
                 )}
+                <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                  Let op: niet elke “Elektriciteitsprijs”-parameter heeft uurdata — alleen de
+                  sensor die HA's volledige daguur-curve publiceert werkt hier (vaak “gemiddelde
+                  prijs” genoemd). Een “huidige prijs”-sensor van dezelfde integratie geeft meestal
+                  maar één actuele waarde en toont dan “geen uurprijzen beschikbaar”.
+                </p>
               </div>
             ) : (
               <>

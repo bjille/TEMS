@@ -35,7 +35,10 @@ function normalizePricePoints(attributes) {
 
   const byTimestampMs = new Map();
   for (const entry of source) {
-    const rawTime = entry?.time ?? entry?.timestamp ?? entry?.datetime;
+    // Different price integrations key the hour differently: entso-e uses
+    // `time`, Frank Energie uses `from`/`till` (a proper ISO string, unlike
+    // entso-e's space-separated one below), Nordpool-style ones use `start`.
+    const rawTime = entry?.time ?? entry?.timestamp ?? entry?.datetime ?? entry?.from ?? entry?.start;
     const price = entry?.price ?? entry?.value;
     if (!rawTime || typeof price !== 'number') continue;
     // HA's entso-e integration formats `time` as "2026-09-22 00:00:00+02:00"

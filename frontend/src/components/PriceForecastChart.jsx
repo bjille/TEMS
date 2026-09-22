@@ -116,8 +116,11 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
   if (data.points.length === 0) {
     return (
       <p className="muted">
-        Geen uurprijzen beschikbaar voor {parameter.label}. Controleer of de sensor in Home
-        Assistant een <code>prices</code>- of <code>prices_today</code>-attribuut levert.
+        Geen uurprijzen beschikbaar voor {parameter.label}. Deze sensor levert (nog) geen{' '}
+        <code>prices</code>-, <code>prices_today</code>- of <code>from</code>/<code>till</code>
+        -attribuut in Home Assistant. Dit betekent meestal dat het om een "huidige prijs"-sensor
+        gaat i.p.v. de "gemiddelde prijs"/curve-sensor van dezelfde integratie — kies in Admin →
+        Grafieken de variant die wél de volledige dagcurve publiceert.
       </p>
     );
   }
