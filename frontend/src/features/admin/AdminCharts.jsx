@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
+import { fetchWoningen, selectWoningen, selectSelectedWoningId } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
 import { fetchCharts, createChart, updateChart, deleteChart, copyChart, selectChartsForWoning } from '../charts/chartsSlice';
 import { groupByCategory, collectCategories, categoryLabel } from '../parameters/parameterCategories';
@@ -74,6 +74,7 @@ function chartSummary(chart) {
 export default function AdminCharts() {
   const dispatch = useDispatch();
   const woningen = useSelector(selectWoningen);
+  const selectedWoningId = useSelector(selectSelectedWoningId);
   const [woningId, setWoningId] = useState('');
   const parameters = useSelector(selectParametersForWoning(woningId));
   const chartableParameters = useMemo(
@@ -112,9 +113,15 @@ export default function AdminCharts() {
     dispatch(fetchWoningen());
   }, [dispatch]);
 
+  // Default to whichever woning is selected up top in the header, so
+  // opening Admin lands you on the same woning you were just looking at
+  // instead of always the first one — falls back to that first woning only
+  // when nothing (or "Alle installaties") is selected there.
   useEffect(() => {
-    if (!woningId && woningen[0]) setWoningId(woningen[0]._id);
-  }, [woningen, woningId]);
+    if (woningId || woningen.length === 0) return;
+    const stillExists = selectedWoningId && woningen.some((w) => w._id === selectedWoningId);
+    setWoningId(stillExists ? selectedWoningId : woningen[0]._id);
+  }, [woningen, woningId, selectedWoningId]);
 
   useEffect(() => {
     if (woningId) {

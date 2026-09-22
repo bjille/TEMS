@@ -49,19 +49,31 @@ function lookupValue(byId, ref) {
 // whatever's left goes to export/charging. This keeps every negative value
 // as its own separate, correctly-sized link instead of folding them all
 // into one combined flow.
+//
+// Battery is listed before PV in the supply queue on purpose: since Thuis
+// is always the first demand filled, putting battery first caps its
+// contribution at min(battery, thuis) — it can never be left with leftover
+// once Thuis is satisfied, so it can never appear feeding Net (export) or a
+// charging demand. Almost every home battery only discharges to cover load
+// (self-consumption / "eigen verbruik" mode, by far the most common setup)
+// and never exports to the grid on its own, so any supply left over after
+// Thuis is satisfied should read as solar surplus, not battery — which is
+// exactly what PV being queued second (and therefore the one left holding
+// the leftover) produces. A system genuinely configured to discharge the
+// battery to the grid still shows that correctly: it only happens once the
+// battery's own reading exceeds what Thuis needed, i.e. there's a real
+// leftover in its queue slot by the time Net is reached.
 function buildFlows({ pv, battery, grid }) {
   const supplies = [];
   const otherDemands = [];
 
+  if (typeof battery === 'number' && battery > 0.5) supplies.push({ name: 'Batterij', amount: battery });
   if (typeof pv === 'number' && pv > 0.5) supplies.push({ name: 'Zonnepanelen', amount: pv });
   if (typeof grid === 'number') {
     if (grid > 0.5) supplies.push({ name: 'Net', amount: grid });
     else if (grid < -0.5) otherDemands.push({ name: 'Net', amount: -grid });
   }
-  if (typeof battery === 'number') {
-    if (battery > 0.5) supplies.push({ name: 'Batterij', amount: battery });
-    else if (battery < -0.5) otherDemands.push({ name: 'Batterij', amount: -battery });
-  }
+  if (typeof battery === 'number' && battery < -0.5) otherDemands.push({ name: 'Batterij', amount: -battery });
 
   const totalSupply = supplies.reduce((s, x) => s + x.amount, 0);
   const totalOtherDemand = otherDemands.reduce((s, x) => s + x.amount, 0);

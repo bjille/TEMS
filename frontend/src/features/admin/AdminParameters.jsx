@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchWoningen, selectWoningen } from '../woningen/woningenSlice';
+import { fetchWoningen, selectWoningen, selectSelectedWoningId } from '../woningen/woningenSlice';
 import {
   fetchParameters,
   createParameter,
@@ -45,6 +45,7 @@ const emptyForm = {
 export default function AdminParameters() {
   const dispatch = useDispatch();
   const woningen = useSelector(selectWoningen);
+  const selectedWoningId = useSelector(selectSelectedWoningId);
   const [woningId, setWoningId] = useState('');
   const parameters = useSelector(selectParametersForWoning(woningId));
   const [form, setForm] = useState(emptyForm);
@@ -90,9 +91,15 @@ export default function AdminParameters() {
     dispatch(fetchParameterCategories());
   }, [dispatch]);
 
+  // Default to whichever woning is selected up top in the header, so
+  // opening Admin lands you on the same woning you were just looking at
+  // instead of always the first one — falls back to that first woning only
+  // when nothing (or "Alle installaties") is selected there.
   useEffect(() => {
-    if (!woningId && woningen[0]) setWoningId(woningen[0]._id);
-  }, [woningen, woningId]);
+    if (woningId || woningen.length === 0) return;
+    const stillExists = selectedWoningId && woningen.some((w) => w._id === selectedWoningId);
+    setWoningId(stillExists ? selectedWoningId : woningen[0]._id);
+  }, [woningen, woningId, selectedWoningId]);
 
   useEffect(() => {
     if (woningId) dispatch(fetchParameters(woningId));
