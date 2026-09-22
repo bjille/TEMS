@@ -12,6 +12,7 @@ const TYPE_OPTIONS = [
   { value: 'bar', label: 'Balken' },
   { value: 'pie', label: 'Cirkeldiagram (totalen)' },
   { value: 'energyflow', label: 'Energieflow' },
+  { value: 'price_forecast', label: 'Dynamische prijzen (uurcurve)' },
 ];
 
 const RANGE_OPTIONS = [
@@ -79,6 +80,13 @@ export default function AdminCharts() {
     () => parameters.filter((p) => !isSwitchEntity(p)),
     [parameters]
   );
+  // A price-forecast chart reads the hourly curve off a dynamic-prices HA
+  // entity's own attributes (see backend `price-forecast` route), so only
+  // parameters of that type are meaningful choices here.
+  const priceForecastParameters = useMemo(
+    () => chartableParameters.filter((p) => p.type === 'electricity_price'),
+    [chartableParameters]
+  );
   const parameterCategoryOptions = useMemo(
     () => collectCategories(chartableParameters),
     [chartableParameters]
@@ -93,8 +101,11 @@ export default function AdminCharts() {
     : chartableParameters;
 
   const isEnergyFlow = form.type === 'energyflow';
+  const isPriceForecast = form.type === 'price_forecast';
   const canSubmit = isEnergyFlow
     ? Object.values(form.flowRoles).some(Boolean)
+    : isPriceForecast
+    ? form.parameterIds.length === 1
     : form.parameterIds.length > 0;
 
   useEffect(() => {
@@ -266,7 +277,11 @@ export default function AdminCharts() {
                 <tr key={c._id}>
                   <td>{c.name}</td>
                   <td>{TYPE_OPTIONS.find((t) => t.value === c.type)?.label || c.type}</td>
-                  <td>{c.type === 'energyflow' ? 'live' : RANGE_OPTIONS.find((r) => r.value === c.rangeHours)?.label || `${c.rangeHours}u`}</td>
+                  <td>
+                    {c.type === 'energyflow' || c.type === 'price_forecast'
+                      ? 'live'
+                      : RANGE_OPTIONS.find((r) => r.value === c.rangeHours)?.label || `${c.rangeHours}u`}
+                  </td>
                   <td className="muted">{chartSummary(c)}</td>
                   <td>
                     <button className="btn" onClick={() => toggleShowOnDashboard(c)}>
@@ -330,6 +345,14 @@ export default function AdminCharts() {
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
                   Toont het totale verbruik (kWh) per gekozen parameter over de hele periode, als
                   aandeel van het geheel.
+                </p>
+              )}
+              {isPriceForecast && (
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Toont de uurprijzen van vandaag (en morgen zodra ENTSO-E die publiceert) als
+                  staafdiagram, rechtstreeks uit het <code>prices</code>/<code>prices_today</code>
+                  -attribuut van de sensor in Home Assistant — geen periode, werkt niet via de
+                  opgeslagen historiek.
                 </p>
               )}
             </div>
@@ -428,6 +451,28 @@ export default function AdminCharts() {
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
                   Rangschikt de knooppunten in een cirkel i.p.v. in lagen naast elkaar.
                 </p>
+              </div>
+            ) : isPriceForecast ? (
+              <div className="form-field">
+                <label>Prijzensensor</label>
+                <select
+                  value={form.parameterIds[0] || ''}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      parameterIds: e.target.value ? [e.target.value] : [],
+                    }))
+                  }
+                >
+                  <option value="">— kies sensor —</option>
+                  <ParameterOptions parameters={priceForecastParameters} />
+                </select>
+                {priceForecastParameters.length === 0 && (
+                  <p className="muted" style={{ margin: '6px 0 0' }}>
+                    Deze woning heeft nog geen parameter van het type “Elektriciteitsprijs”. Voeg
+                    de sensor eerst toe onder Parameters.
+                  </p>
+                )}
               </div>
             ) : (
               <>

@@ -7,6 +7,7 @@ import { useLiveReadings } from '../parameters/useLiveReadings';
 import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
 import PieTotalsChart from '../../components/PieTotalsChart';
+import PriceForecastChart from '../../components/PriceForecastChart';
 
 const RANGES = [
   { label: '24 uur', hours: 24 },
@@ -59,6 +60,9 @@ export default function ChartDetailPage() {
   }
 
   const isEnergyFlow = chart.type === 'energyflow';
+  // Neither chart type is a fixed-range history query: energyflow is a live
+  // snapshot, price_forecast is HA's own forecast window (today/tomorrow).
+  const hasNoRange = isEnergyFlow || chart.type === 'price_forecast';
   const subtitle = isEnergyFlow
     ? Object.values(chart.flowRoles || {})
         .filter(Boolean)
@@ -73,7 +77,7 @@ export default function ChartDetailPage() {
       </Link>
       <div className="section-header" style={{ marginTop: 12 }}>
         <h1>{chart.name}</h1>
-        {!isEnergyFlow && (
+        {!hasNoRange && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {RANGES.map((r) => (
               <button
@@ -100,6 +104,8 @@ export default function ChartDetailPage() {
           <EnergyFlowChart chart={chart} woningId={woningId} height={480} />
         ) : chart.type === 'pie' ? (
           <PieTotalsChart chart={displayChart} woningId={woningId} height={480} />
+        ) : chart.type === 'price_forecast' ? (
+          <PriceForecastChart chart={chart} woningId={woningId} height={480} />
         ) : (
           <ApexSeriesChart chart={displayChart} woningId={woningId} height={480} />
         )}

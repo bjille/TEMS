@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow'];
+const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast'];
 
 // A user-defined chart combining one or more Parameters of a woning into a
 // single, pre-configured view (e.g. "Energiestromen": PV + batterij + net).
@@ -13,6 +13,9 @@ const dashboardChartSchema = new mongoose.Schema(
     rangeHours: { type: Number, default: 24, min: 1 },
     // Used for type 'line' | 'area' | 'bar' | 'pie': the series to plot over
     // time, or (for 'pie') the parameters to total up over `rangeHours`.
+    // For 'price_forecast' this holds exactly one parameter: the entity
+    // whose HA attributes carry the hourly price curve (see
+    // routes/parameters.js `price-forecast`).
     parameters: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' }],
     // Used for type 'energyflow': signed power sensors (W) feeding a live
     // Sankey diagram — positive grid/battery means import/discharge, negative

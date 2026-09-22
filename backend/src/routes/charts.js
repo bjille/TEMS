@@ -71,14 +71,20 @@ function assertValidDeviceTree(devices) {
 }
 
 // A chart is either a time series over one or more `parameters` (line/area/
-// bar), or an `energyflow` diagram driven by up to three `flowRoles`
-// (mutually exclusive with `parameters`, and at least one role required).
-// `devices` (the per-appliance breakdown of "Thuis") is optional either way.
+// bar), a `price_forecast` chart driven by exactly one `parameters` entry
+// (the dynamic-prices entity whose HA attributes carry the hourly curve),
+// or an `energyflow` diagram driven by up to three `flowRoles` (mutually
+// exclusive with `parameters`, and at least one role required). `devices`
+// (the per-appliance breakdown of "Thuis") is optional either way.
 function validateShape(req) {
   const type = req.body.type || 'line';
   if (type === 'energyflow') {
     if (collectFlowRoleIds(req.body.flowRoles).length === 0) {
       throw new ApiError(400, 'Kies minstens één parameter (PV, batterij of net) voor een energieflow-diagram');
+    }
+  } else if (type === 'price_forecast') {
+    if (!Array.isArray(req.body.parameters) || req.body.parameters.length !== 1) {
+      throw new ApiError(400, 'Kies precies 1 parameter (de dynamische-prijzensensor) voor een prijzengrafiek');
     }
   } else if (!Array.isArray(req.body.parameters) || req.body.parameters.length === 0) {
     throw new ApiError(400, 'Kies minstens één parameter');
