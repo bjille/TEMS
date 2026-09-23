@@ -22,6 +22,44 @@ async function latestValue(parameterId) {
   return reading ? reading.value : null;
 }
 
+// Looks back this many full calendar days when averaging daily consumption —
+// long enough to smooth out one-off high/low days without reacting too
+// slowly to a real change in household habits.
+const AVG_CONSUMPTION_LOOKBACK_DAYS = 14;
+
+// Average total daily consumption in kWh, computed from locally-ingested
+// Readings by time-weighting each one across the gap until the next reading
+// (zero-order hold — the same reasoning routes/readings.js uses for its
+// daily-total bucketing, just against stored Readings instead of a live HA
+// history fetch). Only counts full calendar days (today is excluded — it's
+// still in progress) and returns null when there isn't enough history yet to
+// compute a meaningful average, so callers can fall back to ignoring
+// consumption entirely.
+async function averageDailyConsumptionKwh(parameterId, days = AVG_CONSUMPTION_LOOKBACK_DAYS) {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+
+  const readings = await Reading.find({ parameter: parameterId, timestamp: { $gte: start, $lt: end } })
+    .sort({ timestamp: 1 })
+    .select('value timestamp')
+    .lean();
+
+  if (readings.length < 2) return null;
+
+  let weightedSum = 0; // W*ms
+  for (let i = 0; i < readings.length; i++) {
+    const value = readings[i].value;
+    if (typeof value !== 'number') continue;
+    const fromMs = new Date(readings[i].timestamp).getTime();
+    const toMs = i + 1 < readings.length ? new Date(readings[i + 1].timestamp).getTime() : end.getTime();
+    weightedSum += value * (toMs - fromMs);
+  }
+
+  const coveredDays = (end.getTime() - new Date(readings[0].timestamp).getTime()) / (24 * 3600 * 1000);
+  return coveredDays > 0 ? weightedSum / 3.6e9 / coveredDays : null;
+}
+
 // Pure decision logic, kept separate from I/O so it's easy to reason about
 // (and test) on its own: given the current state-of-charge, how much solar
 // production is still expected today, and the hourly price curve, decide
@@ -32,23 +70,47 @@ async function latestValue(parameterId) {
 // tops up further than `targetSocPercent - (solar the forecast still
 // expects)`, so a sunny forecast alone can bring the plan's shortfall to
 // zero without ever touching the grid.
+//
+// Remaining solar has to cover the household's own load before any of it can
+// reach the battery — crediting the full forecast toward charging (as if the
+// house drew nothing) overstates how much actually gets there. `avgDaily
+// ConsumptionKwh`, prorated by the fraction of today still ahead, estimates
+// that household draw and nets it off the solar forecast before the
+// shortfall is computed.
 function computeChargePlan({
   capacityKwh,
   targetSocPercent,
   maxChargePowerKw,
   currentSocPercent,
   solarRemainingKwh,
+  avgDailyConsumptionKwh,
   pricePoints,
   now = new Date(),
 }) {
   const neededKwh = Math.max(0, (capacityKwh * (targetSocPercent - currentSocPercent)) / 100);
-  const shortfallKwh = Math.max(0, neededKwh - Math.max(0, solarRemainingKwh || 0));
+
+  const endOfDay = new Date(now);
+  endOfDay.setHours(24, 0, 0, 0);
+  const remainingHoursToday = Math.max(0, Math.min(24, (endOfDay.getTime() - now.getTime()) / 3600000));
+  const expectedConsumptionKwh =
+    typeof avgDailyConsumptionKwh === 'number' ? (avgDailyConsumptionKwh * remainingHoursToday) / 24 : 0;
+  const netSolarRemainingKwh = Math.max(0, (solarRemainingKwh || 0) - expectedConsumptionKwh);
+
+  const shortfallKwh = Math.max(0, neededKwh - netSolarRemainingKwh);
 
   const nowHourMs = floorToHourMs(now);
   const upcoming = pricePoints.filter((p) => new Date(p.timestamp).getTime() >= nowHourMs);
 
   if (shortfallKwh <= 0.01 || upcoming.length === 0) {
-    return { neededKwh, shortfallKwh: 0, hoursNeeded: 0, chargeHours: [], upcomingHours: upcoming };
+    return {
+      neededKwh,
+      expectedConsumptionKwh,
+      netSolarRemainingKwh,
+      shortfallKwh: 0,
+      hoursNeeded: 0,
+      chargeHours: [],
+      upcomingHours: upcoming,
+    };
   }
 
   const hoursNeeded = Math.min(upcoming.length, Math.ceil(shortfallKwh / maxChargePowerKw));
@@ -57,7 +119,7 @@ function computeChargePlan({
     .slice(0, hoursNeeded)
     .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-  return { neededKwh, shortfallKwh, hoursNeeded, chargeHours, upcomingHours: upcoming };
+  return { neededKwh, expectedConsumptionKwh, netSolarRemainingKwh, shortfallKwh, hoursNeeded, chargeHours, upcomingHours: upcoming };
 }
 
 // Gathers a plan's live inputs (current SOC, remaining solar forecast, price
@@ -66,10 +128,13 @@ function computeChargePlan({
 // own tick (deciding whether to act) — both need exactly the same
 // computation, just with different consumers of the result.
 async function evaluatePlan(plan) {
-  const [socValue, solarValue, woning] = await Promise.all([
+  const [socValue, solarValue, woning, avgDailyConsumptionKwh] = await Promise.all([
     latestValue(plan.socParameter._id || plan.socParameter),
     latestValue(plan.solarRemainingParameter._id || plan.solarRemainingParameter),
     Woning.findById(plan.woning).select('+haTokenEncrypted'),
+    plan.consumptionParameter
+      ? averageDailyConsumptionKwh(plan.consumptionParameter._id || plan.consumptionParameter)
+      : Promise.resolve(null),
   ]);
 
   const currentSocPercent = typeof socValue === 'number' ? socValue : null;
@@ -106,6 +171,7 @@ async function evaluatePlan(plan) {
     maxChargePowerKw: plan.maxChargePowerKw,
     currentSocPercent,
     solarRemainingKwh,
+    avgDailyConsumptionKwh,
     pricePoints: forecast.points,
   });
 
@@ -116,6 +182,7 @@ async function evaluatePlan(plan) {
     ready: true,
     currentSocPercent,
     solarRemainingKwh,
+    avgDailyConsumptionKwh,
     priceUnit: forecast.unit,
     shouldChargeNow,
     ...plan_,
@@ -151,6 +218,7 @@ class SmartChargeEngine {
     const plans = await SmartChargePlan.find({ enabled: true }).populate([
       'socParameter',
       'solarRemainingParameter',
+      'consumptionParameter',
       'priceParameter',
       'chargeSwitchParameter',
     ]);
@@ -238,5 +306,12 @@ module.exports = {
   SmartChargeEngine,
   computeChargePlan,
   evaluatePlan,
-  SMART_CHARGE_POPULATE_PATHS: ['socParameter', 'solarRemainingParameter', 'priceParameter', 'chargeSwitchParameter'],
+  averageDailyConsumptionKwh,
+  SMART_CHARGE_POPULATE_PATHS: [
+    'socParameter',
+    'solarRemainingParameter',
+    'consumptionParameter',
+    'priceParameter',
+    'chargeSwitchParameter',
+  ],
 };

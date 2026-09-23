@@ -33,6 +33,14 @@ const smartChargePlanSchema = new mongoose.Schema(
     socParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
     // Remaining solar production forecast for the rest of today, in kWh.
     solarRemainingParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
+    // Actual home power consumption (W), e.g. an 'energy_consumption'
+    // parameter — the same kind of sensor an EnergyFlowChart's flowRoles.thuis
+    // points at. Optional: when set, the engine nets its historical average
+    // daily consumption off the remaining solar forecast before computing the
+    // grid-charge shortfall, since remaining solar has to cover household load
+    // before any of it reaches the battery. Left unset, the plan falls back to
+    // treating all remaining solar as available for charging.
+    consumptionParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     // A dynamic-prices parameter whose HA entity carries the hourly price
     // curve (see services/priceForecastService.js) — the same kind of
     // parameter a 'price_forecast' DashboardChart uses.

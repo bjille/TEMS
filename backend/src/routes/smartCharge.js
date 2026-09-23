@@ -16,6 +16,7 @@ const POPULATE_FIELDS = 'label unit type entityId controlDomain';
 const POPULATE_PATHS = [
   { path: 'socParameter', select: POPULATE_FIELDS },
   { path: 'solarRemainingParameter', select: POPULATE_FIELDS },
+  { path: 'consumptionParameter', select: POPULATE_FIELDS },
   { path: 'priceParameter', select: POPULATE_FIELDS },
   { path: 'chargeSwitchParameter', select: POPULATE_FIELDS },
 ];
@@ -42,6 +43,7 @@ const planFieldValidators = [
   body('priority').optional().isInt(),
   body('socParameter').isMongoId(),
   body('solarRemainingParameter').isMongoId(),
+  body('consumptionParameter').optional({ checkFalsy: true }).isMongoId(),
   body('priceParameter').isMongoId(),
   body('chargeSwitchParameter').isMongoId(),
 ];
@@ -83,7 +85,13 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
   try {
     checkValidation(req);
     await assertParametersBelongToWoning(
-      [req.body.socParameter, req.body.solarRemainingParameter, req.body.priceParameter, req.body.chargeSwitchParameter],
+      [
+        req.body.socParameter,
+        req.body.solarRemainingParameter,
+        req.body.consumptionParameter,
+        req.body.priceParameter,
+        req.body.chargeSwitchParameter,
+      ],
       req.params.woningId
     );
 
@@ -96,6 +104,7 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       priority: req.body.priority ?? 0,
       socParameter: req.body.socParameter,
       solarRemainingParameter: req.body.solarRemainingParameter,
+      consumptionParameter: req.body.consumptionParameter || undefined,
       priceParameter: req.body.priceParameter,
       chargeSwitchParameter: req.body.chargeSwitchParameter,
       createdBy: req.user._id,
@@ -122,18 +131,32 @@ router.patch(
       if (
         req.body.socParameter ||
         req.body.solarRemainingParameter ||
+        req.body.consumptionParameter ||
         req.body.priceParameter ||
         req.body.chargeSwitchParameter
       ) {
         await assertParametersBelongToWoning(
-          [req.body.socParameter, req.body.solarRemainingParameter, req.body.priceParameter, req.body.chargeSwitchParameter],
+          [
+            req.body.socParameter,
+            req.body.solarRemainingParameter,
+            req.body.consumptionParameter,
+            req.body.priceParameter,
+            req.body.chargeSwitchParameter,
+          ],
           req.params.woningId
         );
       }
 
+      const updates = { ...req.body };
+      // An empty selection clears the (optional) consumption parameter
+      // rather than being cast to an ObjectId, which would throw.
+      if ('consumptionParameter' in updates && !updates.consumptionParameter) {
+        updates.consumptionParameter = null;
+      }
+
       const plan = await SmartChargePlan.findOneAndUpdate(
         { _id: req.params.planId, woning: req.params.woningId },
-        req.body,
+        updates,
         { new: true, runValidators: true }
       ).populate(POPULATE_PATHS);
       if (!plan) throw new ApiError(404, 'Smart charge plan not found');

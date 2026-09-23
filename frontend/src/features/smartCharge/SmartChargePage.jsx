@@ -24,6 +24,7 @@ const emptyForm = {
   maxChargePowerKw: '',
   socParameter: '',
   solarRemainingParameter: '',
+  consumptionParameter: '',
   priceParameter: '',
   chargeSwitchParameter: '',
 };
@@ -75,8 +76,11 @@ function PlanStatus({ status }) {
       </div>
       <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.9em' }}>
         Huidige SOC: {status.currentSocPercent}% · Nog nodig tot streefwaarde:{' '}
-        {formatKwh(status.neededKwh)} · Verwacht van zon vandaag: {formatKwh(status.solarRemainingKwh)} ·
-        Van net: {formatKwh(status.shortfallKwh)}
+        {formatKwh(status.neededKwh)} · Verwacht van zon vandaag: {formatKwh(status.solarRemainingKwh)}
+        {typeof status.avgDailyConsumptionKwh === 'number' && (
+          <> · Verwacht eigen verbruik: {formatKwh(status.expectedConsumptionKwh)}</>
+        )}{' '}
+        · Van net: {formatKwh(status.shortfallKwh)}
       </p>
       {status.chargeHours.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
@@ -117,6 +121,10 @@ export default function SmartChargePage() {
 
   const socParameters = useMemo(() => parameters.filter((p) => p.type === 'battery_soc'), [parameters]);
   const solarParameters = useMemo(() => parameters.filter((p) => p.type === 'solar_power'), [parameters]);
+  const consumptionParameters = useMemo(
+    () => parameters.filter((p) => p.type === 'energy_consumption'),
+    [parameters]
+  );
   const priceParameters = useMemo(() => parameters.filter((p) => p.type === 'electricity_price'), [parameters]);
   const switchParameters = useMemo(
     () => parameters.filter((p) => p.type === 'switch_controllable'),
@@ -140,6 +148,7 @@ export default function SmartChargePage() {
       maxChargePowerKw: plan.maxChargePowerKw,
       socParameter: plan.socParameter?._id || '',
       solarRemainingParameter: plan.solarRemainingParameter?._id || '',
+      consumptionParameter: plan.consumptionParameter?._id || '',
       priceParameter: plan.priceParameter?._id || '',
       chargeSwitchParameter: plan.chargeSwitchParameter?._id || '',
     });
@@ -164,6 +173,7 @@ export default function SmartChargePage() {
       maxChargePowerKw: Number(form.maxChargePowerKw),
       socParameter: form.socParameter,
       solarRemainingParameter: form.solarRemainingParameter,
+      consumptionParameter: form.consumptionParameter || null,
       priceParameter: form.priceParameter,
       chargeSwitchParameter: form.chargeSwitchParameter,
     };
@@ -316,6 +326,20 @@ export default function SmartChargePage() {
               parameters={solarParameters}
               placeholder="— kies parameter —"
             />
+          </div>
+          <div className="form-field">
+            <label>Huisverbruik (optioneel, W)</label>
+            <ParameterSelect
+              value={form.consumptionParameter}
+              onChange={(v) => setForm({ ...form, consumptionParameter: v })}
+              parameters={consumptionParameters}
+              placeholder="— geen —"
+            />
+            <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+              Wanneer gekozen houdt het plan rekening met het gemiddelde dagelijkse verbruik
+              van de voorbije 14 dagen: dat verbruik gaat eerst van de zonneprognose af, vóór
+              de rest naar de batterij gerekend wordt.
+            </p>
           </div>
           <div className="form-field">
             <label>Dynamische-prijzensensor (met uurcurve)</label>
