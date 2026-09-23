@@ -39,9 +39,13 @@ function lookupValue(byId, ref) {
 // Builds the flow diagram from three signed power sensors (W): PV is always
 // >= 0; grid > 0 means importing, < 0 exporting; battery > 0 means
 // discharging (to the house), < 0 means charging. "Thuis" (actual home
-// consumption) isn't measured directly — it's whatever supply is left after
-// the directly-measured export/charging draws are subtracted, i.e. supply
-// minus those other sinks, not the raw pass-through total.
+// consumption) is taken from a directly-measured sensor when `thuisDirect`
+// is given; otherwise it falls back to whatever supply is left after the
+// directly-measured export/charging draws are subtracted. That fallback
+// assumes pv/battery/grid were all read at the same instant, which they
+// aren't — each sensor updates on its own schedule, so the subtraction can
+// dip below zero and silently drop the whole "Thuis" flow even while the
+// house is clearly consuming power. A direct sensor sidesteps that entirely.
 //
 // We can't know which physical source fed which sink (only the aggregate
 // totals), so supply is allocated across demands greedily in a fixed
@@ -63,7 +67,7 @@ function lookupValue(byId, ref) {
 // battery to the grid still shows that correctly: it only happens once the
 // battery's own reading exceeds what Thuis needed, i.e. there's a real
 // leftover in its queue slot by the time Net is reached.
-function buildFlows({ pv, battery, grid }) {
+function buildFlows({ pv, battery, grid, thuisDirect }) {
   const supplies = [];
   const otherDemands = [];
 
@@ -77,7 +81,7 @@ function buildFlows({ pv, battery, grid }) {
 
   const totalSupply = supplies.reduce((s, x) => s + x.amount, 0);
   const totalOtherDemand = otherDemands.reduce((s, x) => s + x.amount, 0);
-  const thuis = round(totalSupply - totalOtherDemand);
+  const thuis = round(typeof thuisDirect === 'number' ? thuisDirect : totalSupply - totalOtherDemand);
   const demands = thuis > 0.5 ? [{ name: 'Thuis', amount: thuis }, ...otherDemands] : otherDemands;
 
   const nodes = new Map();
@@ -176,6 +180,7 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
       pv: lookupValue(byId, chart.flowRoles?.pv),
       battery: lookupValue(byId, chart.flowRoles?.battery),
       grid: lookupValue(byId, chart.flowRoles?.grid),
+      thuisDirect: lookupValue(byId, chart.flowRoles?.thuis),
     }),
     [byId, chart.flowRoles]
   );

@@ -11,13 +11,14 @@ const { CHART_TYPES } = require('../models/DashboardChart');
 
 const router = express.Router({ mergeParams: true });
 
-const FLOW_ROLE_KEYS = ['pv', 'battery', 'grid'];
+const FLOW_ROLE_KEYS = ['pv', 'battery', 'grid', 'thuis'];
 const POPULATE_FIELDS = 'label unit type';
 const POPULATE_PATHS = [
   { path: 'parameters', select: POPULATE_FIELDS },
   { path: 'flowRoles.pv', select: POPULATE_FIELDS },
   { path: 'flowRoles.battery', select: POPULATE_FIELDS },
   { path: 'flowRoles.grid', select: POPULATE_FIELDS },
+  { path: 'flowRoles.thuis', select: POPULATE_FIELDS },
   { path: 'devices.parameter', select: POPULATE_FIELDS },
   { path: 'devices.parent', select: POPULATE_FIELDS },
 ];
@@ -117,6 +118,7 @@ router.post(
     body('flowRoles.pv').optional().isMongoId(),
     body('flowRoles.battery').optional().isMongoId(),
     body('flowRoles.grid').optional().isMongoId(),
+    body('flowRoles.thuis').optional().isMongoId(),
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
@@ -168,6 +170,7 @@ router.patch(
     body('flowRoles.pv').optional().isMongoId(),
     body('flowRoles.battery').optional().isMongoId(),
     body('flowRoles.grid').optional().isMongoId(),
+    body('flowRoles.thuis').optional().isMongoId(),
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),

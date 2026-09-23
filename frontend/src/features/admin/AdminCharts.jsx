@@ -25,6 +25,10 @@ const FLOW_ROLES = [
   { key: 'pv', label: 'Zonnepanelen (PV-opwek)' },
   { key: 'battery', label: 'Batterij (signed: + ontladen, − laden)' },
   { key: 'grid', label: 'Net (signed: + import, − export)' },
+  {
+    key: 'thuis',
+    label: 'Thuisverbruik (optioneel, rechtstreekse meting — anders afgeleid uit bovenstaande)',
+  },
 ];
 
 // Switch entities (e.g. "switch.keuken_droogkast") report string states
@@ -52,7 +56,7 @@ const emptyForm = {
   type: 'line',
   rangeHours: 24,
   parameterIds: [],
-  flowRoles: { pv: '', battery: '', grid: '' },
+  flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis
   circular: false,
   showOnDashboard: false,
@@ -186,6 +190,7 @@ export default function AdminCharts() {
         pv: chart.flowRoles?.pv?._id || '',
         battery: chart.flowRoles?.battery?._id || '',
         grid: chart.flowRoles?.grid?._id || '',
+        thuis: chart.flowRoles?.thuis?._id || '',
       },
       devices: (chart.devices || [])
         .filter((d) => d.parameter)

@@ -19,12 +19,16 @@ const dashboardChartSchema = new mongoose.Schema(
     parameters: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' }],
     // Used for type 'energyflow': signed power sensors (W) feeding a live
     // Sankey diagram — positive grid/battery means import/discharge, negative
-    // means export/charge. "Thuis" (home consumption) is derived, not
-    // configured, since it's whatever balances the other flows.
+    // means export/charge. "Thuis" (home consumption) falls back to a
+    // derived value (whatever balances the other flows) when `thuis` isn't
+    // set, but that derivation assumes pv/battery/grid were all sampled at
+    // the same instant — in practice they update independently, so a direct
+    // `thuis` sensor is preferred whenever one is available.
     flowRoles: {
       pv: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
       battery: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
       grid: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
+      thuis: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     },
     // Optional per-appliance power sensors (W) that further break "Thuis"
     // down into individual consumers, arranged as a tree via `parent` (which
