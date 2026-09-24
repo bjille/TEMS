@@ -29,17 +29,30 @@ const smartChargePlanSchema = new mongoose.Schema(
     // How fast `chargeSwitchParameter` can pull from the grid, in kW — used
     // to convert a kWh shortfall into a number of hours to schedule.
     maxChargePowerKw: { type: Number, required: true, min: 0.01 },
+    // Optional daily deadline ("HH:MM", local time) by which targetSocPercent
+    // must be reached — e.g. "07:00" for an EV that needs to be full before
+    // the morning commute. When set, the engine only considers price hours up
+    // to the next occurrence of this time (today's if it hasn't passed yet,
+    // otherwise tomorrow's) when choosing which hours to charge in — see
+    // services/smartChargeEngine.js's computeChargePlan. Left unset, any
+    // upcoming hour in the price forecast is eligible, same as before this
+    // field existed.
+    targetTime: { type: String, trim: true, match: /^([01]\d|2[0-3]):([0-5]\d)$/ },
     // Current state-of-charge, 0-100 (e.g. a battery_soc parameter).
     socParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
     // Remaining solar production forecast for the rest of today, in kWh.
     solarRemainingParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
-    // Actual home power consumption (W), e.g. an 'energy_consumption'
-    // parameter — the same kind of sensor an EnergyFlowChart's flowRoles.thuis
-    // points at. Optional: when set, the engine nets its historical average
-    // daily consumption off the remaining solar forecast before computing the
-    // grid-charge shortfall, since remaining solar has to cover household load
-    // before any of it reaches the battery. Left unset, the plan falls back to
-    // treating all remaining solar as available for charging.
+    // Total home consumption, an 'energy_consumption' parameter in either an
+    // instantaneous power sensor (W, e.g. the same sensor an EnergyFlowChart's
+    // flowRoles.thuis points at) or a daily-reset cumulative counter (kWh,
+    // e.g. a "Thuisverbruik dag" utility-meter helper) — see
+    // services/smartChargeEngine.js's averageDailyConsumptionKwh for how the
+    // two are told apart and averaged. Optional: when set, the engine nets
+    // that historical average daily consumption off the remaining solar
+    // forecast before computing the grid-charge shortfall, since remaining
+    // solar has to cover household load before any of it reaches the
+    // battery. Left unset, the plan falls back to treating all remaining
+    // solar as available for charging.
     consumptionParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     // A dynamic-prices parameter whose HA entity carries the hourly price
     // curve (see services/priceForecastService.js) — the same kind of

@@ -25,6 +25,7 @@ const emptyForm = {
   socParameter: '',
   solarRemainingParameter: '',
   consumptionParameter: '',
+  targetTime: '',
   priceParameter: '',
   chargeSwitchParameter: '',
 };
@@ -82,6 +83,17 @@ function PlanStatus({ status }) {
         )}{' '}
         · Van net: {formatKwh(status.shortfallKwh)}
       </p>
+      {status.deadlineAt && (
+        <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85em' }}>
+          Moet klaar zijn tegen {formatHour(status.deadlineAt)}
+        </p>
+      )}
+      {status.deadlineAt && status.deadlineFeasible === false && (
+        <p className="error-text" style={{ margin: '4px 0 0', fontSize: '0.85em' }}>
+          Kan met dit maximale laadvermogen niet volledig op tijd geladen zijn — er zijn niet
+          genoeg goedkope uren vóór de deadline.
+        </p>
+      )}
       {status.chargeHours.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {status.chargeHours.map((h) => (
@@ -149,6 +161,7 @@ export default function SmartChargePage() {
       socParameter: plan.socParameter?._id || '',
       solarRemainingParameter: plan.solarRemainingParameter?._id || '',
       consumptionParameter: plan.consumptionParameter?._id || '',
+      targetTime: plan.targetTime || '',
       priceParameter: plan.priceParameter?._id || '',
       chargeSwitchParameter: plan.chargeSwitchParameter?._id || '',
     });
@@ -174,6 +187,7 @@ export default function SmartChargePage() {
       socParameter: form.socParameter,
       solarRemainingParameter: form.solarRemainingParameter,
       consumptionParameter: form.consumptionParameter || null,
+      targetTime: form.targetTime || null,
       priceParameter: form.priceParameter,
       chargeSwitchParameter: form.chargeSwitchParameter,
     };
@@ -328,7 +342,7 @@ export default function SmartChargePage() {
             />
           </div>
           <div className="form-field">
-            <label>Huisverbruik (optioneel, W)</label>
+            <label>Huisverbruik (optioneel)</label>
             <ParameterSelect
               value={form.consumptionParameter}
               onChange={(v) => setForm({ ...form, consumptionParameter: v })}
@@ -336,9 +350,24 @@ export default function SmartChargePage() {
               placeholder="— geen —"
             />
             <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
-              Wanneer gekozen houdt het plan rekening met het gemiddelde dagelijkse verbruik
-              van de voorbije 14 dagen: dat verbruik gaat eerst van de zonneprognose af, vóór
-              de rest naar de batterij gerekend wordt.
+              Werkt zowel met een vermogenssensor (W, continu) als met een dagteller die
+              elke nacht op 0 begint (kWh, bv. &ldquo;Thuisverbruik dag&rdquo;). Wanneer gekozen houdt
+              het plan rekening met het gemiddelde dagelijkse verbruik van de voorbije 14
+              dagen: dat verbruik gaat eerst van de zonneprognose af, vóór de rest naar de
+              batterij gerekend wordt.
+            </p>
+          </div>
+          <div className="form-field">
+            <label>Volledig geladen tegen (optioneel, uur)</label>
+            <input
+              type="time"
+              value={form.targetTime}
+              onChange={(e) => setForm({ ...form, targetTime: e.target.value })}
+            />
+            <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+              Bv. 07:00 als de auto of batterij klaar moet zijn voor de ochtend. Enkel de
+              prijs-uren vóór dit tijdstip komen dan in aanmerking om vanaf het net te laden.
+              Zonder tijdstip mag het plan om het even welk beschikbaar uur kiezen.
             </p>
           </div>
           <div className="form-field">

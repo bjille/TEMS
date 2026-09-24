@@ -44,6 +44,7 @@ const planFieldValidators = [
   body('socParameter').isMongoId(),
   body('solarRemainingParameter').isMongoId(),
   body('consumptionParameter').optional({ checkFalsy: true }).isMongoId(),
+  body('targetTime').optional({ checkFalsy: true }).matches(/^([01]\d|2[0-3]):([0-5]\d)$/),
   body('priceParameter').isMongoId(),
   body('chargeSwitchParameter').isMongoId(),
 ];
@@ -105,6 +106,7 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       socParameter: req.body.socParameter,
       solarRemainingParameter: req.body.solarRemainingParameter,
       consumptionParameter: req.body.consumptionParameter || undefined,
+      targetTime: req.body.targetTime || undefined,
       priceParameter: req.body.priceParameter,
       chargeSwitchParameter: req.body.chargeSwitchParameter,
       createdBy: req.user._id,
@@ -152,6 +154,11 @@ router.patch(
       // rather than being cast to an ObjectId, which would throw.
       if ('consumptionParameter' in updates && !updates.consumptionParameter) {
         updates.consumptionParameter = null;
+      }
+      // Same for the (optional) deadline: an empty string should clear it,
+      // not fail the "HH:MM" pattern match.
+      if ('targetTime' in updates && !updates.targetTime) {
+        updates.targetTime = null;
       }
 
       const plan = await SmartChargePlan.findOneAndUpdate(
