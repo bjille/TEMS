@@ -70,7 +70,7 @@ function DashboardCharts({ woningId }) {
   return (
     <div
       className="grid"
-      style={{ marginBottom: 20, gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))' }}
+      style={{ marginBottom: 20, gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))' }}
     >
       {dashboardCharts.map((chart) => (
         <div key={chart._id} className="card">

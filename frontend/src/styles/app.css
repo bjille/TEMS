@@ -70,7 +70,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
   gap: 18px;
 }
 
@@ -184,4 +184,13 @@
   width: 100%;
   padding: 10px 14px;
   margin-top: 4px;
+}
+
+/* Wide tables (admin lists) scroll sideways within their own box on narrow
+   screens instead of widening the whole page. */
+@media (max-width: 768px) {
+  .table {
+    display: block;
+    overflow-x: auto;
+  }
 }
