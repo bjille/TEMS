@@ -35,10 +35,25 @@
   background: var(--accent);
 }
 
+.layout-menu {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex: 1;
+}
+
 .layout-nav {
   display: flex;
   gap: 4px;
   flex: 1;
+}
+
+.layout-menu-toggle {
+  display: none;
+}
+
+.layout-menu-backdrop {
+  display: none;
 }
 
 .layout-nav a {
@@ -78,6 +93,105 @@
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .layout-header {
+    justify-content: space-between;
+    padding: 10px 16px;
+  }
+
+  .layout-menu-toggle {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 40px;
+    height: 40px;
+    padding: 0 9px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .layout-menu-toggle span {
+    display: block;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--text-primary);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .layout-menu-toggle.open span:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+  }
+
+  .layout-menu-toggle.open span:nth-child(2) {
+    opacity: 0;
+  }
+
+  .layout-menu-toggle.open span:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
+  }
+
+  .layout-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px 16px 16px;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    max-height: calc(100vh - 61px);
+    overflow-y: auto;
+  }
+
+  .layout-menu.open {
+    display: flex;
+  }
+
+  .layout-nav {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .layout-nav a {
+    padding: 11px 12px;
+    font-size: 1em;
+  }
+
+  .layout-actions {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .layout-actions > :first-child {
+    flex-basis: 100%;
+  }
+
+  .layout-user {
+    flex: 1;
+  }
+
+  .layout-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  .layout-main {
+    padding: 16px;
+  }
 }
 
 .page-loading {
