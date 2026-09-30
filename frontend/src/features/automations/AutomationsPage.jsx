@@ -38,8 +38,13 @@ function describeTrigger(automation) {
       ? `Dynamische timer — actief, vuurt af om ${new Date(automation.trigger.timerTargetAt).toLocaleTimeString('nl-BE')}`
       : `Dynamische timer — countdown van ${duration} min (start via dashboard)`;
   }
-  const { hour, minute, days } = parseCronExpression(automation.trigger.cronExpression);
+  const { hour, minute, days, dayOfMonth } = parseCronExpression(automation.trigger.cronExpression);
   const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (dayOfMonth) {
+    return dayOfMonth === 1
+      ? `Om ${time} op de eerste dag van elke maand`
+      : `Om ${time} op dag ${dayOfMonth} van elke maand`;
+  }
   const dayLabel = days.length === 0 ? 'elke dag' : days.map((d) => DAY_LABELS[d]).join(', ');
   return `Om ${time} (${dayLabel})`;
 }
@@ -151,7 +156,7 @@ export default function AutomationsPage() {
                 <strong>{automation.action.parameter?.label || '?'}</strong> {describeAction(automation)}.
               </p>
               {canManage && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                   <button
                     className="btn"
                     onClick={() => {

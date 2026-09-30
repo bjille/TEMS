@@ -88,6 +88,9 @@
 
 .form-field input,
 .form-field select {
+  /* Inputs have an intrinsic width (~20 characters) that stops them from
+     shrinking inside flex rows; let them fit the space they're given. */
+  min-width: 0;
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: 8px;

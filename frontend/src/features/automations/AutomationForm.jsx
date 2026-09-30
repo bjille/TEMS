@@ -34,6 +34,8 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
   const [hour, setHour] = useState(initialCron.hour);
   const [minute, setMinute] = useState(initialCron.minute);
   const [days, setDays] = useState(initialCron.days);
+  const [repeat, setRepeat] = useState(initialCron.dayOfMonth ? 'monthly' : 'weekly');
+  const [dayOfMonth, setDayOfMonth] = useState(initialCron.dayOfMonth || 1);
   const [timerMode, setTimerMode] = useState(automation?.trigger?.timerMode || 'countdown');
   const [timerClockTime, setTimerClockTime] = useState(automation?.trigger?.timerClockTime || '22:00');
   const [timerDurationMinutes, setTimerDurationMinutes] = useState(
@@ -89,7 +91,12 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
 
     let trigger;
     if (triggerType === 'schedule') {
-      trigger = { type: 'schedule', cronExpression: buildCronExpression({ hour, minute, days }) };
+      trigger = { type: 'schedule', cronExpression: buildCronExpression({
+          hour,
+          minute,
+          days,
+          dayOfMonth: repeat === 'monthly' ? Math.min(28, Math.max(1, Number(dayOfMonth) || 1)) : null,
+        }) };
     } else if (triggerType === 'timer') {
       trigger =
         timerMode === 'clock'
@@ -102,11 +109,13 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
     const payload = {
       name,
       trigger,
-      // A timer fires purely on time, so it needs no sensor conditions.
+      // A timer fires purely on time, so it needs no sensor conditions; for
+      // the others an untouched (parameter-less) row is dropped rather than
+      // failing validation — a schedule may run without any condition.
       conditions:
         triggerType === 'timer'
           ? []
-          : conditions.map((c) => ({
+          : conditions.filter((c) => c.parameter).map((c) => ({
               parameter: c.parameter,
               operator: c.operator,
               value: c.value === '' || Number.isNaN(Number(c.value)) ? c.value : Number(c.value),
@@ -195,7 +204,12 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
 
       {triggerType === 'schedule' && (
         <div className="form-field">
-          <label>Tijdstip en dagen</label>
+          <label>Herhaling</label>
+          <select value={repeat} onChange={(e) => setRepeat(e.target.value)} style={{ marginBottom: 8 }}>
+            <option value="weekly">Dagelijks of op bepaalde weekdagen</option>
+            <option value="monthly">Maandelijks op een vaste dag</option>
+          </select>
+          <label>{repeat === 'monthly' ? 'Tijdstip' : 'Tijdstip en dagen'}</label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
             <input
               type="number"
@@ -215,7 +229,22 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
               style={{ width: 70 }}
             />
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          {repeat === 'monthly' ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span>Op dag</span>
+              <input
+                type="number"
+                min={1}
+                max={28}
+                value={dayOfMonth}
+                onChange={(e) => setDayOfMonth(e.target.value)}
+                style={{ width: 70 }}
+              />
+              <span>van elke maand</span>
+            </div>
+          ) : (
+          <>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {ALL_DAYS.map((d) => (
               <button
                 type="button"
@@ -231,6 +260,13 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
           <p className="muted" style={{ fontSize: '0.8em' }}>
             Geen dag geselecteerd = elke dag.
           </p>
+          </>
+          )}
+          {repeat === 'monthly' && (
+            <p className="muted" style={{ fontSize: '0.8em' }}>
+              Dag 1 tot 28, zodat de automatisering ook in februari afgaat.
+            </p>
+          )}
         </div>
       )}
 
