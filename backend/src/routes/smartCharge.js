@@ -40,6 +40,7 @@ const planFieldValidators = [
   body('name').isString().notEmpty(),
   body('capacityKwh').isFloat({ min: 0.1 }),
   body('targetSocPercent').optional().isFloat({ min: 1, max: 100 }),
+  body('gridTargetSocPercent').optional({ nullable: true, checkFalsy: true }).isFloat({ min: 1, max: 100 }),
   body('maxChargePowerKw').isFloat({ min: 0.01 }),
   body('priority').optional().isInt(),
   body('socParameter').isMongoId(),
@@ -131,6 +132,7 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       name: req.body.name,
       capacityKwh: req.body.capacityKwh,
       targetSocPercent: req.body.targetSocPercent ?? 100,
+      gridTargetSocPercent: req.body.gridTargetSocPercent || undefined,
       maxChargePowerKw: req.body.maxChargePowerKw,
       priority: req.body.priority ?? 0,
       socParameter: req.body.socParameter,
@@ -191,6 +193,10 @@ router.patch(
       // not fail the "HH:MM" pattern match.
       if ('targetTime' in updates && !updates.targetTime) {
         updates.targetTime = null;
+      }
+      // Likewise, an empty grid ceiling means "no ceiling".
+      if ('gridTargetSocPercent' in updates && !updates.gridTargetSocPercent) {
+        updates.gridTargetSocPercent = null;
       }
       if (
         'chargeSwitchParameter' in updates ||

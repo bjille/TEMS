@@ -132,6 +132,7 @@ async function averageDailyConsumptionKwh(parameter, days = AVG_CONSUMPTION_LOOK
 function computeChargePlan({
   capacityKwh,
   targetSocPercent,
+  gridTargetSocPercent,
   maxChargePowerKw,
   currentSocPercent,
   solarRemainingKwh,
@@ -149,7 +150,14 @@ function computeChargePlan({
     typeof avgDailyConsumptionKwh === 'number' ? (avgDailyConsumptionKwh * remainingHoursToday) / 24 : 0;
   const netSolarRemainingKwh = Math.max(0, (solarRemainingKwh || 0) - expectedConsumptionKwh);
 
-  const shortfallKwh = Math.max(0, neededKwh - netSolarRemainingKwh);
+  // gridTargetSocPercent caps how far the grid may charge, independent of the
+  // solar math: once the battery reaches it, the shortfall drops to 0 and
+  // the next tick stops charging.
+  const gridLimitKwh =
+    typeof gridTargetSocPercent === 'number'
+      ? Math.max(0, (capacityKwh * (gridTargetSocPercent - currentSocPercent)) / 100)
+      : Infinity;
+  const shortfallKwh = Math.min(gridLimitKwh, Math.max(0, neededKwh - netSolarRemainingKwh));
 
   const deadline = nextOccurrence(targetTime, now);
   const deadlineAt = deadline ? deadline.toISOString() : null;
@@ -262,6 +270,7 @@ async function evaluatePlan(plan) {
   const plan_ = computeChargePlan({
     capacityKwh: plan.capacityKwh,
     targetSocPercent: plan.targetSocPercent,
+    gridTargetSocPercent: plan.gridTargetSocPercent,
     maxChargePowerKw: plan.maxChargePowerKw,
     currentSocPercent,
     solarRemainingKwh,
@@ -279,6 +288,7 @@ async function evaluatePlan(plan) {
     solarRemainingKwh,
     avgDailyConsumptionKwh,
     priceUnit: forecast.unit,
+    gridTargetSocPercent: plan.gridTargetSocPercent ?? null,
     shouldChargeNow,
     ...plan_,
   };

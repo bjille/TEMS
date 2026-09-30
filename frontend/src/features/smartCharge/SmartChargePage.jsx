@@ -21,6 +21,7 @@ const emptyForm = {
   name: '',
   capacityKwh: '',
   targetSocPercent: 100,
+  gridTargetSocPercent: '',
   maxChargePowerKw: '',
   socParameter: '',
   solarRemainingParameter: '',
@@ -78,8 +79,12 @@ function PlanStatus({ status }) {
   }
 
   const dotColor = status.shortfallKwh <= 0 ? STATUS.good : status.shouldChargeNow ? STATUS.warning : 'var(--text-muted)';
+  const atGridLimit =
+    typeof status.gridTargetSocPercent === 'number' && status.currentSocPercent >= status.gridTargetSocPercent;
   const headline =
-    status.shortfallKwh <= 0
+    status.shortfallKwh <= 0 && atGridLimit
+      ? `Netlaadgrens van ${status.gridTargetSocPercent}% bereikt — de rest moet van de zon komen`
+      : status.shortfallKwh <= 0
       ? 'Zon dekt de rest van vandaag — geen laadbeurt via het net nodig'
       : status.chargeHours.length === 0
       ? `Tekort van ${formatKwh(status.shortfallKwh)}, maar geen prijs-uren meer beschikbaar${
@@ -179,6 +184,7 @@ export default function SmartChargePage() {
       name: plan.name,
       capacityKwh: plan.capacityKwh,
       targetSocPercent: plan.targetSocPercent,
+      gridTargetSocPercent: plan.gridTargetSocPercent ?? '',
       maxChargePowerKw: plan.maxChargePowerKw,
       socParameter: plan.socParameter?._id || '',
       solarRemainingParameter: plan.solarRemainingParameter?._id || '',
@@ -207,6 +213,7 @@ export default function SmartChargePage() {
       name: form.name,
       capacityKwh: Number(form.capacityKwh),
       targetSocPercent: Number(form.targetSocPercent),
+      gridTargetSocPercent: form.gridTargetSocPercent === '' ? null : Number(form.gridTargetSocPercent),
       maxChargePowerKw: Number(form.maxChargePowerKw),
       socParameter: form.socParameter,
       solarRemainingParameter: form.solarRemainingParameter,
@@ -295,7 +302,9 @@ export default function SmartChargePage() {
             </div>
           </div>
           <p className="muted" style={{ fontSize: '0.85em', margin: '0 0 10px' }}>
-            {plan.capacityKwh} kWh · streef {plan.targetSocPercent}% · max {plan.maxChargePowerKw} kW van het net
+            {plan.capacityKwh} kWh · streef {plan.targetSocPercent}%
+            {typeof plan.gridTargetSocPercent === 'number' && ` · van het net tot max ${plan.gridTargetSocPercent}%`} · max{' '}
+            {plan.maxChargePowerKw} kW van het net
             {plan.chargeSwitchParameter && ` · via ${plan.chargeSwitchParameter.label}`}
             {!plan.enabled && ' · alleen aanbeveling, schakelt de switch niet zelf'}
           </p>
@@ -336,6 +345,21 @@ export default function SmartChargePage() {
               onChange={(e) => setForm({ ...form, targetSocPercent: e.target.value })}
               required
             />
+          </div>
+          <div className="form-field">
+            <label>Van het net laden tot maximaal (%, optioneel)</label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              placeholder="— geen grens —"
+              value={form.gridTargetSocPercent}
+              onChange={(e) => setForm({ ...form, gridTargetSocPercent: e.target.value })}
+            />
+            <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+              Bv. 60: het net laadt de batterij hoogstens tot 60%, ook als de zon de streef-SOC
+              niet haalt. Leeg laten om het volledige tekort tot de streef-SOC van het net te laden.
+            </p>
           </div>
           <div className="form-field">
             <label>Max. laadvermogen vanaf het net (kW)</label>

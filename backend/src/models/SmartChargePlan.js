@@ -26,6 +26,11 @@ const smartChargePlanSchema = new mongoose.Schema(
     // of whichever car is plugged in), so it's a plain configured number.
     capacityKwh: { type: Number, required: true, min: 0.1 },
     targetSocPercent: { type: Number, default: 100, min: 1, max: 100 },
+    // Optional ceiling for grid charging specifically: the grid never tops
+    // the battery up beyond this SOC, even when the solar forecast leaves a
+    // bigger gap to targetSocPercent — the rest is left for the sun. Unset,
+    // grid charging may cover the whole shortfall up to targetSocPercent.
+    gridTargetSocPercent: { type: Number, min: 1, max: 100 },
     // How fast `chargeSwitchParameter` can pull from the grid, in kW — used
     // to convert a kWh shortfall into a number of hours to schedule.
     maxChargePowerKw: { type: Number, required: true, min: 0.01 },
