@@ -160,17 +160,21 @@ function computeChargePlan({
     return t >= nowHourMs && (!deadline || t < deadline.getTime());
   });
 
+  // No eligible hours left (price curve ends, or the deadline is already
+  // behind every known hour) must still report the real shortfall — zeroing
+  // it here would read as "solar covers it" while the battery stays short.
   if (shortfallKwh <= 0.01 || upcoming.length === 0) {
+    const covered = shortfallKwh <= 0.01;
     return {
       neededKwh,
       expectedConsumptionKwh,
       netSolarRemainingKwh,
-      shortfallKwh: 0,
+      shortfallKwh: covered ? 0 : shortfallKwh,
       hoursNeeded: 0,
       chargeHours: [],
       upcomingHours: upcoming,
       deadlineAt,
-      deadlineFeasible: shortfallKwh <= 0.01,
+      deadlineFeasible: covered,
     };
   }
 
@@ -235,7 +239,11 @@ async function evaluatePlan(plan) {
   const forecast =
     woning && priceParameter ? await fetchPriceForecast(priceParameter, woning).catch(() => null) : null;
 
-  if (currentSocPercent === null || solarRemainingKwh === null || !forecast) {
+  // An entity that went `unavailable` in HA still fetches fine, just without
+  // its price attributes — treat an empty curve like a failed fetch.
+  const hasPrices = forecast && forecast.points.length > 0;
+
+  if (currentSocPercent === null || solarRemainingKwh === null || !hasPrices) {
     return {
       ready: false,
       reason:
@@ -243,7 +251,9 @@ async function evaluatePlan(plan) {
           ? 'Geen actuele meting voor de SOC-parameter'
           : solarRemainingKwh === null
           ? 'Geen actuele meting voor de zon-forecast-parameter'
-          : 'Prijsdata ophalen bij Home Assistant mislukt',
+          : !forecast
+          ? 'Prijsdata ophalen bij Home Assistant mislukt'
+          : 'Geen uurprijzen beschikbaar — de prijzensensor in Home Assistant is onbeschikbaar',
       currentSocPercent,
       solarRemainingKwh,
     };
@@ -271,6 +281,38 @@ async function evaluatePlan(plan) {
     priceUnit: forecast.unit,
     shouldChargeNow,
     ...plan_,
+  };
+}
+
+// Translates "charge from the grid now: yes/no" into the HA service call for
+// the plan's chargeSwitchParameter — turn_on/turn_off for a switch, or
+// select_option with the plan's configured on/off option for a select_mode
+// parameter. `targetValue` is the state HA reports once the call took
+// effect, so the caller can skip calls that wouldn't change anything.
+function chargeCommand(plan, chargeNow) {
+  const parameter = plan.chargeSwitchParameter;
+  const domain = parameter.controlDomain || parameter.entityId.split('.')[0];
+
+  if (parameter.type === 'select_mode') {
+    const option = chargeNow ? plan.chargeOnOption : plan.chargeOffOption;
+    if (!option) {
+      return { error: 'Kies voor de regelmodus welke optie "laden" en welke "niet laden" is' };
+    }
+    return {
+      isSelect: true,
+      domain,
+      service: 'select_option',
+      serviceData: { entity_id: parameter.entityId, option },
+      targetValue: option,
+    };
+  }
+
+  return {
+    isSelect: false,
+    domain,
+    service: chargeNow ? 'turn_on' : 'turn_off',
+    serviceData: { entity_id: parameter.entityId },
+    targetValue: chargeNow ? 'on' : 'off',
   };
 }
 
@@ -341,26 +383,37 @@ class SmartChargeEngine {
     const { haConnectionManager } = require('./haConnectionManager'); // deferred: see AutomationEngine.runAction
 
     const switchParameter = plan.chargeSwitchParameter;
-    const currentSwitchValue = await latestValue(switchParameter._id);
-    const currentlyOn = currentSwitchValue === 'on';
-    const desiredOn = status.shouldChargeNow;
-
-    if (currentlyOn === desiredOn) {
-      plan.lastAction = desiredOn ? 'on' : 'off';
+    const command = chargeCommand(plan, status.shouldChargeNow);
+    if (command.error) {
+      plan.lastError = command.error;
       await plan.save();
       return status;
     }
 
+    const currentValue = await latestValue(switchParameter._id);
+    // A select's "off" option is only (re)applied while it's still sitting
+    // in the charge option: any other mode (e.g. discharging to the grid)
+    // was chosen by someone else on purpose, and the plan has no business
+    // overriding it outside its own charge hours.
+    const inSync = command.isSelect
+      ? currentValue === command.targetValue ||
+        (!status.shouldChargeNow && currentValue !== plan.chargeOnOption)
+      : currentValue === command.targetValue;
+
+    if (inSync) {
+      plan.lastAction = status.shouldChargeNow ? 'on' : 'off';
+      await plan.save();
+      return status;
+    }
+
+    const desiredOn = status.shouldChargeNow;
     let result = 'success';
     let errorMessage;
     try {
       const client = haConnectionManager.getClient(plan.woning);
       if (!client) throw new Error('Home Assistant connection not available');
 
-      const domain = switchParameter.controlDomain || switchParameter.entityId.split('.')[0];
-      await client.callService(domain, desiredOn ? 'turn_on' : 'turn_off', {
-        entity_id: switchParameter.entityId,
-      });
+      await client.callService(command.domain, command.service, command.serviceData);
       plan.lastAction = desiredOn ? 'on' : 'off';
     } catch (err) {
       result = 'error';
@@ -373,7 +426,8 @@ class SmartChargeEngine {
     await CommandLog.create({
       woning: plan.woning,
       parameter: switchParameter._id,
-      action: desiredOn ? 'turn_on' : 'turn_off',
+      action: command.service,
+      payload: command.isSelect ? { option: command.targetValue } : undefined,
       result,
       error: errorMessage,
       source: 'smart_charge',

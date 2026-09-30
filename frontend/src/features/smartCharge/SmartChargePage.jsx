@@ -28,6 +28,8 @@ const emptyForm = {
   targetTime: '',
   priceParameter: '',
   chargeSwitchParameter: '',
+  chargeOnOption: '',
+  chargeOffOption: '',
 };
 
 function ParameterSelect({ value, onChange, parameters, placeholder }) {
@@ -37,6 +39,20 @@ function ParameterSelect({ value, onChange, parameters, placeholder }) {
       {parameters.map((p) => (
         <option key={p._id} value={p._id}>
           {p.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function OptionSelect({ value, onChange, parameter }) {
+  const labels = parameter.optionLabels || {};
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">— kies optie —</option>
+      {(parameter.options || []).map((option) => (
+        <option key={option} value={option}>
+          {labels[option] || option}
         </option>
       ))}
     </select>
@@ -65,6 +81,10 @@ function PlanStatus({ status }) {
   const headline =
     status.shortfallKwh <= 0
       ? 'Zon dekt de rest van vandaag — geen laadbeurt via het net nodig'
+      : status.chargeHours.length === 0
+      ? `Tekort van ${formatKwh(status.shortfallKwh)}, maar geen prijs-uren meer beschikbaar${
+          status.deadlineAt ? ' vóór de deadline' : ''
+        }`
       : status.shouldChargeNow
       ? 'Laadt nu vanaf het net (dit is een van de goedkoopste uren)'
       : `Wacht op een goedkoper moment (${status.hoursNeeded} uur nog te plannen)`;
@@ -139,9 +159,11 @@ export default function SmartChargePage() {
   );
   const priceParameters = useMemo(() => parameters.filter((p) => p.type === 'electricity_price'), [parameters]);
   const switchParameters = useMemo(
-    () => parameters.filter((p) => p.type === 'switch_controllable'),
+    () => parameters.filter((p) => p.type === 'switch_controllable' || p.type === 'select_mode'),
     [parameters]
   );
+  const chargeTarget = parameters.find((p) => p._id === form.chargeSwitchParameter);
+  const chargeTargetIsSelect = chargeTarget?.type === 'select_mode';
 
   useEffect(() => {
     if (!woningId) return;
@@ -164,6 +186,8 @@ export default function SmartChargePage() {
       targetTime: plan.targetTime || '',
       priceParameter: plan.priceParameter?._id || '',
       chargeSwitchParameter: plan.chargeSwitchParameter?._id || '',
+      chargeOnOption: plan.chargeOnOption || '',
+      chargeOffOption: plan.chargeOffOption || '',
     });
     setShowForm(true);
     setError(null);
@@ -190,6 +214,8 @@ export default function SmartChargePage() {
       targetTime: form.targetTime || null,
       priceParameter: form.priceParameter,
       chargeSwitchParameter: form.chargeSwitchParameter,
+      chargeOnOption: chargeTargetIsSelect ? form.chargeOnOption : null,
+      chargeOffOption: chargeTargetIsSelect ? form.chargeOffOption : null,
     };
     try {
       if (editingId) {
@@ -223,7 +249,8 @@ export default function SmartChargePage() {
     form.socParameter &&
     form.solarRemainingParameter &&
     form.priceParameter &&
-    form.chargeSwitchParameter;
+    form.chargeSwitchParameter &&
+    (!chargeTargetIsSelect || (form.chargeOnOption && form.chargeOffOption));
 
   return (
     <div>
@@ -269,6 +296,7 @@ export default function SmartChargePage() {
           </div>
           <p className="muted" style={{ fontSize: '0.85em', margin: '0 0 10px' }}>
             {plan.capacityKwh} kWh · streef {plan.targetSocPercent}% · max {plan.maxChargePowerKw} kW van het net
+            {plan.chargeSwitchParameter && ` · via ${plan.chargeSwitchParameter.label}`}
             {!plan.enabled && ' · alleen aanbeveling, schakelt de switch niet zelf'}
           </p>
           <PlanStatus status={plan.status} />
@@ -380,7 +408,7 @@ export default function SmartChargePage() {
             />
           </div>
           <div className="form-field">
-            <label>Laad-schakelaar (aan/uit vanaf het net)</label>
+            <label>Laad-schakelaar of regelmodus (laden vanaf het net)</label>
             <ParameterSelect
               value={form.chargeSwitchParameter}
               onChange={(v) => setForm({ ...form, chargeSwitchParameter: v })}
@@ -388,6 +416,30 @@ export default function SmartChargePage() {
               placeholder="— kies parameter —"
             />
           </div>
+          {chargeTargetIsSelect && (
+            <>
+              <div className="form-field">
+                <label>Optie om te laden vanaf het net</label>
+                <OptionSelect
+                  value={form.chargeOnOption}
+                  onChange={(v) => setForm({ ...form, chargeOnOption: v })}
+                  parameter={chargeTarget}
+                />
+              </div>
+              <div className="form-field">
+                <label>Optie buiten de laaduren</label>
+                <OptionSelect
+                  value={form.chargeOffOption}
+                  onChange={(v) => setForm({ ...form, chargeOffOption: v })}
+                  parameter={chargeTarget}
+                />
+                <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+                  Na een laaduur zet het plan de regelmodus terug op deze optie. Staat de
+                  regelmodus op iets anders dan de laadoptie, dan laat het plan hem ongemoeid.
+                </p>
+              </div>
+            </>
+          )}
           {error && <p className="error-text">{error}</p>}
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-primary" type="submit" disabled={!canSubmit}>

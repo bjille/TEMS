@@ -11,8 +11,9 @@ const router = express.Router({ mergeParams: true });
 
 // Includes controlDomain (unlike the display-only fields alone) because
 // evaluateAndAct needs it to know which HA service domain to call for
-// chargeSwitchParameter.
-const POPULATE_FIELDS = 'label unit type entityId controlDomain';
+// chargeSwitchParameter; options/optionLabels let the form offer a select's
+// on/off options.
+const POPULATE_FIELDS = 'label unit type entityId controlDomain options optionLabels';
 const POPULATE_PATHS = [
   { path: 'socParameter', select: POPULATE_FIELDS },
   { path: 'solarRemainingParameter', select: POPULATE_FIELDS },
@@ -47,7 +48,30 @@ const planFieldValidators = [
   body('targetTime').optional({ checkFalsy: true }).matches(/^([01]\d|2[0-3]):([0-5]\d)$/),
   body('priceParameter').isMongoId(),
   body('chargeSwitchParameter').isMongoId(),
+  body('chargeOnOption').optional({ nullable: true }).isString(),
+  body('chargeOffOption').optional({ nullable: true }).isString(),
 ];
+
+// A select_mode charge target needs both options set (and valid); a switch
+// doesn't use them, so they're cleared rather than left dangling.
+async function normalizeChargeTarget(fields) {
+  const parameter = await Parameter.findById(fields.chargeSwitchParameter).select('type options');
+  if (!parameter) return;
+  if (parameter.type !== 'select_mode') {
+    fields.chargeOnOption = null;
+    fields.chargeOffOption = null;
+    return;
+  }
+  const { chargeOnOption: on, chargeOffOption: off } = fields;
+  if (!on || !off) {
+    throw new ApiError(400, 'Kies voor de regelmodus welke optie "laden" en welke "niet laden" is');
+  }
+  if (on === off) throw new ApiError(400, 'De opties voor laden en niet laden moeten verschillen');
+  const known = parameter.options || [];
+  if (known.length > 0 && (!known.includes(on) || !known.includes(off))) {
+    throw new ApiError(400, 'Onbekende optie voor deze regelmodus');
+  }
+}
 
 router.use(authenticate, authorizeWoning());
 
@@ -95,6 +119,12 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       ],
       req.params.woningId
     );
+    const chargeTarget = {
+      chargeSwitchParameter: req.body.chargeSwitchParameter,
+      chargeOnOption: req.body.chargeOnOption,
+      chargeOffOption: req.body.chargeOffOption,
+    };
+    await normalizeChargeTarget(chargeTarget);
 
     const plan = await SmartChargePlan.create({
       woning: req.params.woningId,
@@ -109,6 +139,8 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       targetTime: req.body.targetTime || undefined,
       priceParameter: req.body.priceParameter,
       chargeSwitchParameter: req.body.chargeSwitchParameter,
+      chargeOnOption: chargeTarget.chargeOnOption || undefined,
+      chargeOffOption: chargeTarget.chargeOffOption || undefined,
       createdBy: req.user._id,
     });
 
@@ -159,6 +191,25 @@ router.patch(
       // not fail the "HH:MM" pattern match.
       if ('targetTime' in updates && !updates.targetTime) {
         updates.targetTime = null;
+      }
+      if (
+        'chargeSwitchParameter' in updates ||
+        'chargeOnOption' in updates ||
+        'chargeOffOption' in updates
+      ) {
+        const existing = await SmartChargePlan.findOne({
+          _id: req.params.planId,
+          woning: req.params.woningId,
+        }).lean();
+        if (!existing) throw new ApiError(404, 'Smart charge plan not found');
+        const chargeTarget = {
+          chargeSwitchParameter: updates.chargeSwitchParameter ?? existing.chargeSwitchParameter,
+          chargeOnOption: 'chargeOnOption' in updates ? updates.chargeOnOption : existing.chargeOnOption,
+          chargeOffOption: 'chargeOffOption' in updates ? updates.chargeOffOption : existing.chargeOffOption,
+        };
+        await normalizeChargeTarget(chargeTarget);
+        updates.chargeOnOption = chargeTarget.chargeOnOption || null;
+        updates.chargeOffOption = chargeTarget.chargeOffOption || null;
       }
 
       const plan = await SmartChargePlan.findOneAndUpdate(

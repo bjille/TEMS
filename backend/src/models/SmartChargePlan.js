@@ -58,8 +58,14 @@ const smartChargePlanSchema = new mongoose.Schema(
     // curve (see services/priceForecastService.js) — the same kind of
     // parameter a 'price_forecast' DashboardChart uses.
     priceParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
-    // The controllable switch that actually starts/stops grid charging.
+    // What actually starts/stops grid charging: either a controllable switch
+    // (turn_on/turn_off) or a select_mode parameter (e.g. an inverter's ESS
+    // control mode), in which case chargeOnOption/chargeOffOption name the
+    // two options to select — e.g. "time_of_use" to charge from the grid and
+    // "maximum_self_consumption" to go back to normal operation.
     chargeSwitchParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
+    chargeOnOption: { type: String, trim: true },
+    chargeOffOption: { type: String, trim: true },
     // Bookkeeping from the engine's last tick, surfaced in the admin/status
     // view so it's visible whether — and when — this plan last acted.
     lastEvaluatedAt: { type: Date },
