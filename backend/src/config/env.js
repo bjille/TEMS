@@ -1,5 +1,12 @@
 require('dotenv').config();
 
+// All wall-clock logic (smart-charge deadlines like "23:00", "rest of today",
+// automation clock times, daily averages) uses the process's local time.
+// Pin it to the installations' timezone so a host running in UTC (a VPS,
+// Docker container, ...) doesn't shift every time by an hour or two.
+// Overridable via APP_TIMEZONE for installations elsewhere.
+process.env.TZ = process.env.APP_TIMEZONE || 'Europe/Brussels';
+
 function required(name, fallback) {
   const value = process.env[name] ?? fallback;
   if (value === undefined) {
