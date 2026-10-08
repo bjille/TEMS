@@ -86,6 +86,8 @@ function PlanStatus({ status }) {
       ? `Netlaadgrens van ${status.gridTargetSocPercent}% bereikt — de rest moet van de zon komen`
       : status.shortfallKwh <= 0
       ? 'Zon dekt de rest van vandaag — geen laadbeurt via het net nodig'
+      : status.notProfitable
+      ? 'Laden vanaf het net is nu niet voordelig — er wordt niet geladen'
       : status.chargeHours.length === 0
       ? `Tekort van ${formatKwh(status.shortfallKwh)}, maar geen prijs-uren meer beschikbaar${
           status.deadlineAt ? ' vóór de deadline' : ''
@@ -108,6 +110,21 @@ function PlanStatus({ status }) {
         )}{' '}
         · Van net: {formatKwh(status.shortfallKwh)}
       </p>
+      {typeof status.breakEvenPrice === 'number' && status.shortfallKwh > 0 && (
+        <p
+          className={status.notProfitable ? 'error-text' : 'muted'}
+          style={{ margin: '4px 0 0', fontSize: '0.85em' }}
+        >
+          {status.notProfitable
+            ? 'Geen enkel uur is goedkoop genoeg: '
+            : status.skippedUnprofitableHours > 0
+            ? `${status.skippedUnprofitableHours} van de goedkoopste uren overgeslagen omdat ze niet voordelig zijn. `
+            : ''}
+          Met {Math.round((1 - status.roundTripEfficiency) * 100)}% omzettingsverlies (laden + ontladen) loont
+          laden enkel onder {status.breakEvenPrice.toFixed(3)} {status.priceUnit} (gemiddelde prijs van de andere
+          uren: {status.avoidedPrice.toFixed(3)} {status.priceUnit}).
+        </p>
+      )}
       {status.deadlineAt && (
         <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85em' }}>
           Moet klaar zijn tegen {formatHour(status.deadlineAt)}

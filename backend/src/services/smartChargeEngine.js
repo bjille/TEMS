@@ -129,6 +129,16 @@ async function averageDailyConsumptionKwh(parameter, days = AVG_CONSUMPTION_LOOK
 // deadline can fully cover the shortfall at `maxChargePowerKw`; when they
 // can't, `chargeHours` still schedules as many of the cheapest eligible
 // hours as it can (best effort) rather than leaving the plan empty-handed.
+// Conversion losses for a battery charged from the grid: ~10% going in
+// (AC -> DC) and ~10% coming back out (DC -> AC). A kWh bought from the grid
+// therefore only displaces 0.81 kWh of later grid consumption, so a grid
+// charge only pays off when its price is below 81% of the price it avoids.
+const CHARGE_EFFICIENCY = 0.9;
+const DISCHARGE_EFFICIENCY = 0.9;
+const ROUND_TRIP_EFFICIENCY = CHARGE_EFFICIENCY * DISCHARGE_EFFICIENCY;
+
+const average = (values) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);
+
 function computeChargePlan({
   capacityKwh,
   targetSocPercent,
@@ -186,13 +196,29 @@ function computeChargePlan({
     };
   }
 
-  const hoursNeeded = Math.min(upcoming.length, Math.ceil(shortfallKwh / maxChargePowerKw));
-  const chargeHours = [...upcoming]
-    .sort((a, b) => a.price - b.price)
-    .slice(0, hoursNeeded)
-    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  // maxChargePowerKw is drawn from the grid; only 90% of it ends up stored.
+  const storedPerHourKwh = maxChargePowerKw * CHARGE_EFFICIENCY;
+  const hoursNeeded = Math.min(upcoming.length, Math.ceil(shortfallKwh / storedPerHourKwh));
+  const cheapest = [...upcoming].sort((a, b) => a.price - b.price).slice(0, hoursNeeded);
 
-  const deadlineFeasible = upcoming.length * maxChargePowerKw >= shortfallKwh - 0.01;
+  // The stored energy later replaces grid consumption at "normal" prices:
+  // estimated as the average of every other known upcoming hour (the whole
+  // forecast, not just up to the deadline — the battery is used afterwards
+  // too). An hour is only worth charging in when its price, grossed up for
+  // the round-trip loss, stays below that avoided price.
+  const cheapestTimes = new Set(cheapest.map((h) => h.timestamp));
+  const avoidedPrice = average(
+    pricePoints
+      .filter((p) => new Date(p.timestamp).getTime() >= nowHourMs && !cheapestTimes.has(p.timestamp))
+      .map((p) => p.price)
+  );
+  const isProfitable = (h) => avoidedPrice === null || h.price / ROUND_TRIP_EFFICIENCY < avoidedPrice;
+  const chargeHours = cheapest
+    .filter(isProfitable)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const notProfitable = chargeHours.length === 0;
+
+  const deadlineFeasible = upcoming.length * storedPerHourKwh >= shortfallKwh - 0.01;
 
   return {
     neededKwh,
@@ -204,6 +230,12 @@ function computeChargePlan({
     upcomingHours: upcoming,
     deadlineAt,
     deadlineFeasible,
+    roundTripEfficiency: ROUND_TRIP_EFFICIENCY,
+    avoidedPrice,
+    // Highest grid price at which charging still pays off.
+    breakEvenPrice: avoidedPrice === null ? null : avoidedPrice * ROUND_TRIP_EFFICIENCY,
+    notProfitable,
+    skippedUnprofitableHours: cheapest.length - chargeHours.length,
   };
 }
 
