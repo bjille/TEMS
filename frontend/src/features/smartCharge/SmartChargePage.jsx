@@ -105,6 +105,9 @@ function PlanStatus({ status }) {
       <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.9em' }}>
         Huidige SOC: {status.currentSocPercent}% · Nog nodig tot streefwaarde:{' '}
         {formatKwh(status.neededKwh)} · Verwacht van zon vandaag: {formatKwh(status.solarRemainingKwh)}
+        {status.deadlineAt && status.solarBeforeDeadlineKwh < status.solarRemainingKwh - 0.01 && (
+          <> (waarvan {formatKwh(status.solarBeforeDeadlineKwh)} vóór de deadline)</>
+        )}
         {typeof status.avgDailyConsumptionKwh === 'number' && (
           <> · Verwacht eigen verbruik: {formatKwh(status.expectedConsumptionKwh)}</>
         )}{' '}

@@ -103,6 +103,70 @@ async function averageDailyConsumptionKwh(parameter, days = AVG_CONSUMPTION_LOOK
   return coveredDays > 0 ? weightedSum / 3.6e9 / coveredDays : null;
 }
 
+// Woningen carry no coordinates, so sunrise/sunset is computed for the
+// centre of Belgium — a few minutes off at the borders, which is well within
+// the accuracy of the solar forecast itself.
+const SITE_LATITUDE = 50.85;
+const SITE_LONGITUDE = 4.35;
+
+// Sunrise and sunset (as Dates) on the calendar day of `date`, using the
+// NOAA approximation. Returns null for polar day/night, which can't happen at
+// this latitude but keeps the math honest.
+function sunTimes(date) {
+  const rad = Math.PI / 180;
+  const dayStart = new Date(date);
+  dayStart.setHours(0, 0, 0, 0);
+  const yearStart = new Date(dayStart.getFullYear(), 0, 1);
+  const dayOfYear = Math.round((dayStart - yearStart) / 86400000) + 1;
+  const gamma = ((2 * Math.PI) / 365) * (dayOfYear - 1);
+  const eqTimeMin =
+    229.18 *
+    (0.000075 +
+      0.001868 * Math.cos(gamma) -
+      0.032077 * Math.sin(gamma) -
+      0.014615 * Math.cos(2 * gamma) -
+      0.040849 * Math.sin(2 * gamma));
+  const decl =
+    0.006918 -
+    0.399912 * Math.cos(gamma) +
+    0.070257 * Math.sin(gamma) -
+    0.006758 * Math.cos(2 * gamma) +
+    0.000907 * Math.sin(2 * gamma) -
+    0.002697 * Math.cos(3 * gamma) +
+    0.00148 * Math.sin(3 * gamma);
+  const cosHa =
+    Math.cos(90.833 * rad) / (Math.cos(SITE_LATITUDE * rad) * Math.cos(decl)) -
+    Math.tan(SITE_LATITUDE * rad) * Math.tan(decl);
+  if (cosHa < -1 || cosHa > 1) return null;
+  const haDeg = Math.acos(cosHa) / rad;
+  const noonUtcMin = 720 - 4 * SITE_LONGITUDE - eqTimeMin;
+  const utcMidnight = Date.UTC(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate());
+  return {
+    sunrise: new Date(utcMidnight + (noonUtcMin - 4 * haDeg) * 60000),
+    sunset: new Date(utcMidnight + (noonUtcMin + 4 * haDeg) * 60000),
+  };
+}
+
+// The solar parameter only gives one number — kWh still expected for the
+// rest of today — with no hourly profile. To know how much of that lands
+// before a deadline later today, production is modelled as a half-sine
+// between sunrise and sunset, and this returns the share of today's
+// remaining production that falls between `now` and `until`. A deadline
+// after today's sunset (including any deadline tomorrow) gets all of it.
+function solarShareBefore(now, until) {
+  const sun = sunTimes(now);
+  if (!sun) return 1;
+  const rise = sun.sunrise.getTime();
+  const set = sun.sunset.getTime();
+  const from = Math.max(now.getTime(), rise);
+  if (until.getTime() >= set || from >= set) return 1;
+  if (until.getTime() <= from) return 0;
+  // ∫ sin(π·(t-rise)/(set-rise)) dt ∝ -cos(...), so shares are cos differences.
+  const cumulative = (t) => -Math.cos((Math.PI * (t - rise)) / (set - rise));
+  const total = cumulative(set) - cumulative(from);
+  return total > 0 ? (cumulative(until.getTime()) - cumulative(from)) / total : 1;
+}
+
 // Pure decision logic, kept separate from I/O so it's easy to reason about
 // (and test) on its own: given the current state-of-charge, how much solar
 // production is still expected today, and the hourly price curve, decide
@@ -153,12 +217,20 @@ function computeChargePlan({
 }) {
   const neededKwh = Math.max(0, (capacityKwh * (targetSocPercent - currentSocPercent)) / 100);
 
+  const deadline = nextOccurrence(targetTime, now);
+  const deadlineAt = deadline ? deadline.toISOString() : null;
+
+  // Solar and household consumption only count up to the deadline when it
+  // falls later today: sun that shines after the battery had to be full
+  // can't help reach the target in time.
   const endOfDay = new Date(now);
   endOfDay.setHours(24, 0, 0, 0);
-  const remainingHoursToday = Math.max(0, Math.min(24, (endOfDay.getTime() - now.getTime()) / 3600000));
+  const windowEnd = deadline && deadline < endOfDay ? deadline : endOfDay;
+  const solarBeforeDeadlineKwh = (solarRemainingKwh || 0) * (deadline ? solarShareBefore(now, deadline) : 1);
+  const remainingHours = Math.max(0, Math.min(24, (windowEnd.getTime() - now.getTime()) / 3600000));
   const expectedConsumptionKwh =
-    typeof avgDailyConsumptionKwh === 'number' ? (avgDailyConsumptionKwh * remainingHoursToday) / 24 : 0;
-  const netSolarRemainingKwh = Math.max(0, (solarRemainingKwh || 0) - expectedConsumptionKwh);
+    typeof avgDailyConsumptionKwh === 'number' ? (avgDailyConsumptionKwh * remainingHours) / 24 : 0;
+  const netSolarRemainingKwh = Math.max(0, solarBeforeDeadlineKwh - expectedConsumptionKwh);
 
   // gridTargetSocPercent caps how far the grid may charge, independent of the
   // solar math: once the battery reaches it, the shortfall drops to 0 and
@@ -168,9 +240,6 @@ function computeChargePlan({
       ? Math.max(0, (capacityKwh * (gridTargetSocPercent - currentSocPercent)) / 100)
       : Infinity;
   const shortfallKwh = Math.min(gridLimitKwh, Math.max(0, neededKwh - netSolarRemainingKwh));
-
-  const deadline = nextOccurrence(targetTime, now);
-  const deadlineAt = deadline ? deadline.toISOString() : null;
 
   const nowHourMs = floorToHourMs(now);
   const upcoming = pricePoints.filter((p) => {
@@ -186,6 +255,7 @@ function computeChargePlan({
     return {
       neededKwh,
       expectedConsumptionKwh,
+      solarBeforeDeadlineKwh,
       netSolarRemainingKwh,
       shortfallKwh: covered ? 0 : shortfallKwh,
       hoursNeeded: 0,
@@ -223,6 +293,7 @@ function computeChargePlan({
   return {
     neededKwh,
     expectedConsumptionKwh,
+    solarBeforeDeadlineKwh,
     netSolarRemainingKwh,
     shortfallKwh,
     hoursNeeded,
