@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { api } from '../../services/api';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
+import { useLiveReadings } from '../parameters/useLiveReadings';
+import BadgeBar from '../../components/BadgeBar';
 import HistoryChart from '../../components/HistoryChart';
 import { colorForType } from '../../palette';
 
@@ -28,6 +30,8 @@ export default function HistoryPage() {
   // and unreadable — show total consumption per day instead. A custom start
   // date has no matching preset, so it keeps the raw view.
   const isDailyView = !customFrom && rangeHours > 24;
+
+  useLiveReadings(woningId);
 
   useEffect(() => {
     if (!parameter) dispatch(fetchParameters(woningId));
@@ -97,6 +101,8 @@ export default function HistoryPage() {
           />
         </div>
       </div>
+
+      <BadgeBar woningId={woningId} sticky />
 
       {loading && <p className="muted">Laden...</p>}
       {error && <p className="error-text">{error}</p>}

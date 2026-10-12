@@ -30,6 +30,9 @@ const parameterSchema = new mongoose.Schema(
     category: { type: String, trim: true, default: '' },
     controllable: { type: Boolean, default: false },
     favorite: { type: Boolean, default: false },
+    // Shown as a compact live-value chip in the badge bar at the top of the
+    // dashboard and chart detail pages, for at-a-glance reading.
+    badge: { type: Boolean, default: false },
     // Flips the sign of every incoming reading (e.g. a grid-power sensor that
     // always reports positive, where negative should mean "exporting").
     invert: { type: Boolean, default: false },

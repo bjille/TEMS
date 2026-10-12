@@ -1,0 +1,81 @@
+.badge-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.badge-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.badge-chip:hover,
+.badge-chip:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+  outline: none;
+}
+
+.badge-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.badge-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.badge-label {
+  font-size: 0.75em;
+  color: var(--text-secondary);
+}
+
+.badge-value {
+  font-size: 0.95em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Pinned right under the sticky header (whose height Layout publishes as
+   --header-height). The negative margins stretch the background across
+   .layout-main's padding so content scrolling underneath stays hidden. */
+.badge-bar-sticky {
+  position: sticky;
+  top: var(--header-height, 0px);
+  z-index: 12;
+  margin: -8px -24px 16px;
+  padding: 8px 24px;
+  background: var(--page-plane);
+}
+
+@media (max-width: 768px) {
+  /* On a phone the chips would wrap into several rows and eat half the
+     screen; keep them on one swipeable row instead. */
+  .badge-bar-sticky {
+    margin: -8px -16px 12px;
+    padding: 8px 16px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .badge-bar-sticky::-webkit-scrollbar {
+    display: none;
+  }
+
+  .badge-bar-sticky .badge-chip {
+    flex-shrink: 0;
+  }
+}

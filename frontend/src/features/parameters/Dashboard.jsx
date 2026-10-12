@@ -7,6 +7,7 @@ import { fetchCharts, selectChartsForWoning } from '../charts/chartsSlice';
 import { selectSelectedWoningId, selectWoningen, selectWoning } from '../woningen/woningenSlice';
 import { useLiveReadings } from './useLiveReadings';
 import Tile from '../../components/Tile';
+import BadgeBar from '../../components/BadgeBar';
 import ControlWidget from '../control/ControlWidget';
 import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
@@ -120,6 +121,7 @@ function WoningOverviewSection({ woning }) {
           Bekijk alles →
         </button>
       </div>
+      <BadgeBar woningId={woning._id} />
       {favorites.length === 0 ? (
         <p className="muted">Geen favoriete parameters ingesteld voor deze woning.</p>
       ) : (
@@ -178,6 +180,7 @@ export default function Dashboard() {
           <CategoryFilter parameters={parameters} value={categoryFilter} onChange={setCategoryFilter} />
         )}
       </div>
+      <BadgeBar woningId={woningId} sticky />
       {parameters.length === 0 ? (
         <p className="muted">Nog geen parameters geconfigureerd voor deze woning.</p>
       ) : (

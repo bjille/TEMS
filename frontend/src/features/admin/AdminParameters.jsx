@@ -39,6 +39,7 @@ const emptyForm = {
   category: '',
   controllable: false,
   favorite: false,
+  badge: false,
   invert: false,
 };
 
@@ -116,6 +117,7 @@ export default function AdminParameters() {
       category: parameter.category || '',
       controllable: parameter.controllable,
       favorite: parameter.favorite,
+      badge: parameter.badge || false,
       invert: parameter.invert || false,
     });
     setOptionsText((parameter.options || []).join(', '));
@@ -142,7 +144,7 @@ export default function AdminParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, category, controllable, favorite, invert } = form;
+        const { type, label, unit, icon, category, controllable, favorite, badge, invert } = form;
         await dispatch(
           updateParameter({
             woningId,
@@ -154,6 +156,7 @@ export default function AdminParameters() {
             category,
             controllable,
             favorite,
+            badge,
             invert,
             options,
             optionLabels,
@@ -192,6 +195,16 @@ export default function AdminParameters() {
         woningId,
         parameterId: parameter._id,
         favorite: !parameter.favorite,
+      })
+    );
+  }
+
+  async function toggleBadge(parameter) {
+    await dispatch(
+      updateParameter({
+        woningId,
+        parameterId: parameter._id,
+        badge: !parameter.badge,
       })
     );
   }
@@ -258,6 +271,7 @@ export default function AdminParameters() {
                 </th>
                 <th>Stuurbaar</th>
                 <th>Favoriet</th>
+                <th>Badge</th>
                 <th>Omgekeerd</th>
                 <th></th>
               </tr>
@@ -288,6 +302,15 @@ export default function AdminParameters() {
                       onClick={() => toggleFavorite(p)}
                     >
                       {p.favorite ? '★ Ja' : '☆ Nee'}
+                    </button>
+                  </td>
+                  <td>
+                    <button
+                      className="btn"
+                      style={p.badge ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}
+                      onClick={() => toggleBadge(p)}
+                    >
+                      {p.badge ? 'Ja' : 'Nee'}
                     </button>
                   </td>
                   <td>
@@ -435,6 +458,17 @@ export default function AdminParameters() {
                   style={{ marginRight: 6 }}
                 />
                 Favoriet (getoond in het overzicht van alle installaties)
+              </label>
+            </div>
+            <div className="form-field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.badge}
+                  onChange={(e) => setForm({ ...form, badge: e.target.checked })}
+                  style={{ marginRight: 6 }}
+                />
+                Badge (live waarde bovenaan het dashboard en de detailgrafieken)
               </label>
             </div>
             <div className="form-field">

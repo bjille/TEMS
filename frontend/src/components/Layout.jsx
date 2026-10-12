@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout, selectAuth } from '../features/auth/authSlice';
@@ -10,6 +10,7 @@ export default function Layout() {
   const { user } = useSelector(selectAuth);
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef(null);
 
   // On mobile the menu is an overlay panel: navigating away should close it
   // rather than leave it covering the page that was just opened.
@@ -17,9 +18,23 @@ export default function Layout() {
     setMenuOpen(false);
   }, [location.pathname]);
 
+  // Publishes the sticky header's height as --header-height, so other sticky
+  // elements (e.g. the badge bar) can park right underneath it — the header
+  // is taller on mobile and can grow when its contents wrap.
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return undefined;
+    const update = () =>
+      document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="layout">
-      <header className="layout-header">
+      <header className="layout-header" ref={headerRef}>
         <Link to="/welkom" className="layout-brand">
           TEMS
         </Link>

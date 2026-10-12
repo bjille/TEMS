@@ -8,6 +8,7 @@ import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
 import PieTotalsChart from '../../components/PieTotalsChart';
 import PriceForecastChart from '../../components/PriceForecastChart';
+import BadgeBar from '../../components/BadgeBar';
 
 const RANGES = [
   { label: '24 uur', hours: 24 },
@@ -92,6 +93,8 @@ export default function ChartDetailPage() {
           </div>
         )}
       </div>
+
+      <BadgeBar woningId={woningId} sticky />
 
       {subtitle && (
         <p className="muted" style={{ marginTop: 0 }}>
