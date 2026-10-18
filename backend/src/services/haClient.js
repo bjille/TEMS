@@ -127,6 +127,57 @@ class HaClient extends EventEmitter {
     return res.data?.[0] || [];
   }
 
+  /**
+   * One-off request over a short-lived WebSocket connection for HA's
+   * long-term statistics (`recorder/statistics_during_period`): hourly
+   * aggregates the recorder keeps indefinitely for every sensor with a
+   * state_class, unlike the state history behind fetchHistory, which is
+   * purged after ~10 days. Resolves to { [statisticId]: rows[] }.
+   */
+  fetchStatistics(statisticIds, { start, end, period = 'hour', types = ['sum', 'mean'] }) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(toWsUrl(this.baseUrl));
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error('Timeout bij ophalen van statistieken uit Home Assistant'));
+      }, 30000);
+      const finish = (fn, value) => {
+        clearTimeout(timer);
+        ws.close();
+        fn(value);
+      };
+      ws.on('message', (raw) => {
+        let msg;
+        try {
+          msg = JSON.parse(raw.toString());
+        } catch {
+          return;
+        }
+        if (msg.type === 'auth_required') {
+          ws.send(JSON.stringify({ type: 'auth', access_token: this.token }));
+        } else if (msg.type === 'auth_ok') {
+          ws.send(
+            JSON.stringify({
+              id: 1,
+              type: 'recorder/statistics_during_period',
+              start_time: start,
+              end_time: end,
+              statistic_ids: statisticIds,
+              period,
+              types,
+            })
+          );
+        } else if (msg.type === 'auth_invalid') {
+          finish(reject, new Error(`HA auth failed: ${msg.message}`));
+        } else if (msg.id === 1) {
+          if (msg.success) finish(resolve, msg.result || {});
+          else finish(reject, new Error(msg.error?.message || 'Statistieken ophalen mislukt'));
+        }
+      });
+      ws.on('error', (err) => finish(reject, err));
+    });
+  }
+
   async callService(domain, service, serviceData) {
     const res = await axios.post(
       `${this.baseUrl}/api/services/${domain}/${service}`,

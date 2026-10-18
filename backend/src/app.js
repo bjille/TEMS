@@ -14,6 +14,7 @@ const controlRoutes = require('./routes/control');
 const automationsRoutes = require('./routes/automations');
 const chartsRoutes = require('./routes/charts');
 const smartChargeRoutes = require('./routes/smartCharge');
+const costsRoutes = require('./routes/costs');
 const adminUsersRoutes = require('./routes/adminUsers');
 const parameterCategoriesRoutes = require('./routes/parameterCategories');
 
@@ -51,6 +52,7 @@ function createApp() {
   app.use('/api/woningen/:woningId/automations', automationsRoutes);
   app.use('/api/woningen/:woningId/charts', chartsRoutes);
   app.use('/api/woningen/:woningId/smart-charge', smartChargeRoutes);
+  app.use('/api/woningen/:woningId/costs', costsRoutes);
   app.use('/api/admin/users', adminUsersRoutes);
   app.use('/api/parameter-categories', parameterCategoriesRoutes);
 

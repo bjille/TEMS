@@ -27,6 +27,8 @@ const ICON_FOR_TYPE = {
   grid_power: 'tower',
   energy_consumption: 'home',
   electricity_price: 'euro',
+  gas_price: 'euro',
+  energy_meter: 'flash',
   ev_charger_power: 'car',
   ev_status: 'car',
   switch_consumer: 'toggle',
@@ -41,7 +43,7 @@ function formatBadgeValue(parameter) {
   const value = parameter.latest?.value;
   if (value === null || value === undefined) return '—';
   if (typeof value !== 'number') return parameter.optionLabels?.[value] || String(value);
-  const decimals = parameter.type === 'electricity_price' ? 3 : Math.abs(value) >= 100 ? 0 : 1;
+  const decimals = parameter.type === 'electricity_price' || parameter.type === 'gas_price' ? 3 : Math.abs(value) >= 100 ? 0 : 1;
   const text = value.toLocaleString('nl-BE', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,

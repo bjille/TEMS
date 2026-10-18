@@ -2,12 +2,13 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const DashboardChart = require('../models/DashboardChart');
 const Parameter = require('../models/Parameter');
+const CostTracker = require('../models/CostTracker');
 const Woning = require('../models/Woning');
 const { buildParameterRemap } = require('../services/parameterRemap');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
-const { CHART_TYPES } = require('../models/DashboardChart');
+const { CHART_TYPES, RANGE_PERIODS } = require('../models/DashboardChart');
 
 const router = express.Router({ mergeParams: true });
 
@@ -21,6 +22,7 @@ const POPULATE_PATHS = [
   { path: 'flowRoles.thuis', select: POPULATE_FIELDS },
   { path: 'devices.parameter', select: POPULATE_FIELDS },
   { path: 'devices.parent', select: POPULATE_FIELDS },
+  { path: 'costTrackers', select: 'name' },
 ];
 
 function checkValidation(req) {
@@ -38,6 +40,14 @@ async function assertParametersBelongToWoning(parameterIds, woningId) {
   });
   if (count !== new Set(parameterIds).size) {
     throw new ApiError(400, 'Eén of meer parameters horen niet bij deze woning');
+  }
+}
+
+async function assertCostTrackersBelongToWoning(trackerIds, woningId) {
+  if (!trackerIds || trackerIds.length === 0) return;
+  const count = await CostTracker.countDocuments({ _id: { $in: trackerIds }, woning: woningId });
+  if (count !== new Set(trackerIds.map(String)).size) {
+    throw new ApiError(400, 'Eén of meer kostenberekeningen horen niet bij deze woning');
   }
 }
 
@@ -74,8 +84,9 @@ function assertValidDeviceTree(devices) {
 // A chart is either a time series over one or more `parameters` (line/area/
 // bar), a `price_forecast` chart driven by exactly one `parameters` entry
 // (the dynamic-prices entity whose HA attributes carry the hourly curve),
-// or an `energyflow` diagram driven by up to three `flowRoles` (mutually
-// exclusive with `parameters`, and at least one role required). `devices`
+// an `energyflow` diagram driven by up to three `flowRoles` (mutually
+// exclusive with `parameters`, and at least one role required), or a `cost`
+// chart over `costTrackers` (none selected meaning all of them). `devices`
 // (the per-appliance breakdown of "Thuis") is optional either way.
 function validateShape(req) {
   const type = req.body.type || 'line';
@@ -83,6 +94,8 @@ function validateShape(req) {
     if (collectFlowRoleIds(req.body.flowRoles).length === 0) {
       throw new ApiError(400, 'Kies minstens één parameter (PV, batterij of net) voor een energieflow-diagram');
     }
+  } else if (type === 'cost') {
+    // No parameters needed: the cost calculations carry their own sensors.
   } else if (type === 'price_forecast') {
     if (!Array.isArray(req.body.parameters) || req.body.parameters.length !== 1) {
       throw new ApiError(400, 'Kies precies 1 parameter (de dynamische-prijzensensor) voor een prijzengrafiek');
@@ -112,6 +125,7 @@ router.post(
     body('name').isString().notEmpty(),
     body('type').optional().isIn(CHART_TYPES),
     body('rangeHours').optional().isInt({ min: 1 }),
+    body('rangePeriod').optional().isIn(RANGE_PERIODS),
     body('parameters').optional().isArray(),
     body('parameters.*').optional().isMongoId(),
     body('flowRoles').optional().isObject(),
@@ -122,6 +136,8 @@ router.post(
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
+    body('costTrackers').optional().isArray(),
+    body('costTrackers.*').optional().isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -135,15 +151,18 @@ router.post(
         [...parameterIds, ...devices.map((d) => d.parameter), ...collectFlowRoleIds(req.body.flowRoles)],
         req.params.woningId
       );
+      await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
 
       const chart = await DashboardChart.create({
         woning: req.params.woningId,
         name: req.body.name,
         type: req.body.type || 'line',
         rangeHours: req.body.rangeHours || 24,
+        rangePeriod: req.body.rangePeriod || 'rolling',
         parameters: parameterIds,
         flowRoles: req.body.flowRoles || {},
         devices,
+        costTrackers: req.body.costTrackers || [],
         circular: req.body.circular || false,
         showOnDashboard: req.body.showOnDashboard || false,
         createdBy: req.user._id,
@@ -164,6 +183,7 @@ router.patch(
     body('name').optional().isString().notEmpty(),
     body('type').optional().isIn(CHART_TYPES),
     body('rangeHours').optional().isInt({ min: 1 }),
+    body('rangePeriod').optional().isIn(RANGE_PERIODS),
     body('parameters').optional().isArray(),
     body('parameters.*').optional().isMongoId(),
     body('flowRoles').optional().isObject(),
@@ -174,6 +194,8 @@ router.patch(
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
+    body('costTrackers').optional().isArray(),
+    body('costTrackers.*').optional().isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -211,6 +233,8 @@ router.patch(
           req.params.woningId
         );
       }
+
+      await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
 
       const chart = await DashboardChart.findOneAndUpdate(
         { _id: req.params.chartId, woning: req.params.woningId },
@@ -277,6 +301,7 @@ router.post(
           name: chart.name,
           type: chart.type,
           rangeHours: chart.rangeHours,
+          rangePeriod: chart.rangePeriod,
           parameters: chart.parameters.map((id) => map.get(id.toString())),
           flowRoles: {
             pv: chart.flowRoles?.pv ? map.get(chart.flowRoles.pv.toString()) : undefined,
@@ -287,6 +312,9 @@ router.post(
             parameter: map.get(d.parameter.toString()),
             parent: d.parent ? map.get(d.parent.toString()) : null,
           })),
+          // Cost calculations are per woning, so the copy shows all of the
+          // target's own instead of pointing at the source's.
+          costTrackers: [],
           circular: chart.circular,
           showOnDashboard: false,
           createdBy: req.user._id,

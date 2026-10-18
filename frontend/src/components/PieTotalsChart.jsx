@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { api } from '../services/api';
 import { CATEGORICAL } from '../palette';
+import { chartRange } from './chartRange';
 
 const PALETTE = Object.values(CATEGORICAL);
 
@@ -19,11 +20,13 @@ export default function PieTotalsChart({ chart, woningId, height = 300 }) {
     async function load() {
       setError(null);
       try {
-        const from = new Date(Date.now() - chart.rangeHours * 3600 * 1000).toISOString();
+        const range = chartRange(chart);
+        const from = range.from.toISOString();
+        const to = new Date(Math.min(range.to, Date.now())).toISOString();
         const results = await Promise.all(
           chart.parameters.map((p) =>
             api.get(`/woningen/${woningId}/readings`, {
-              params: { parameterId: p._id, from, interval: 'day' },
+              params: { parameterId: p._id, from, to, interval: 'day' },
             })
           )
         );

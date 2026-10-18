@@ -13,6 +13,8 @@ const PARAMETER_TYPES = [
   'ev_charger_power',
   'ev_status',
   'energy_consumption',
+  'energy_meter',
+  'gas_price',
   'custom',
 ];
 

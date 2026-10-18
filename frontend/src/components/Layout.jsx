@@ -58,6 +58,7 @@ export default function Layout() {
             <NavLink to="/control">Besturing</NavLink>
             <NavLink to="/automations">Automatiseringen</NavLink>
             <NavLink to="/smart-charge">Slim laden</NavLink>
+            <NavLink to="/costs">Kosten</NavLink>
             {user?.role === 'superadmin' && <NavLink to="/admin">Admin</NavLink>}
           </nav>
           <div className="layout-actions">

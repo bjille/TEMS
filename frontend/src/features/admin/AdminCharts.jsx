@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { api } from '../../services/api';
+import { RANGE_OPTIONS, rangeFields, rangeLabel, rangeValue } from '../../components/chartRange';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchWoningen, selectWoningen, selectSelectedWoningId } from '../woningen/woningenSlice';
 import { fetchParameters, selectParametersForWoning } from '../parameters/parametersSlice';
@@ -13,13 +15,9 @@ const TYPE_OPTIONS = [
   { value: 'pie', label: 'Cirkeldiagram (totalen)' },
   { value: 'energyflow', label: 'Energieflow' },
   { value: 'price_forecast', label: 'Dynamische prijzen (uurcurve)' },
+  { value: 'cost', label: 'Kosten' },
 ];
 
-const RANGE_OPTIONS = [
-  { value: 24, label: '24 uur' },
-  { value: 24 * 7, label: '7 dagen' },
-  { value: 24 * 30, label: '30 dagen' },
-];
 
 const FLOW_ROLES = [
   { key: 'pv', label: 'Zonnepanelen (PV-opwek)' },
@@ -54,15 +52,20 @@ function ParameterOptions({ parameters }) {
 const emptyForm = {
   name: '',
   type: 'line',
-  rangeHours: 24,
+  range: '24', // see RANGE_OPTIONS
   parameterIds: [],
   flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis
+  costTrackerIds: [], // empty = all of the woning's cost calculations
   circular: false,
   showOnDashboard: false,
 };
 
 function chartSummary(chart) {
+  if (chart.type === 'cost') {
+    const names = (chart.costTrackers || []).map((t) => t.name);
+    return names.length > 0 ? names.join(', ') : 'Alle kostenberekeningen';
+  }
   if (chart.type === 'energyflow') {
     const roles = Object.values(chart.flowRoles || {})
       .filter(Boolean)
@@ -107,7 +110,11 @@ export default function AdminCharts() {
 
   const isEnergyFlow = form.type === 'energyflow';
   const isPriceForecast = form.type === 'price_forecast';
-  const canSubmit = isEnergyFlow
+  const isCost = form.type === 'cost';
+  const [costTrackers, setCostTrackers] = useState([]);
+  const canSubmit = isCost
+    ? true
+    : isEnergyFlow
     ? Object.values(form.flowRoles).some(Boolean)
     : isPriceForecast
     ? form.parameterIds.length === 1
@@ -131,6 +138,10 @@ export default function AdminCharts() {
     if (woningId) {
       dispatch(fetchParameters(woningId));
       dispatch(fetchCharts(woningId));
+      api
+        .get(`/woningen/${woningId}/costs/trackers`)
+        .then(({ data }) => setCostTrackers(data))
+        .catch(() => setCostTrackers([]));
     }
     setParameterCategoryFilter('');
   }, [woningId, dispatch]);
@@ -184,7 +195,7 @@ export default function AdminCharts() {
     setForm({
       name: chart.name,
       type: chart.type,
-      rangeHours: chart.rangeHours,
+      range: rangeValue(chart),
       parameterIds: chart.parameters.map((p) => p._id),
       flowRoles: {
         pv: chart.flowRoles?.pv?._id || '',
@@ -198,6 +209,7 @@ export default function AdminCharts() {
           parameterId: d.parameter._id,
           parentId: d.parent?._id || '',
         })),
+      costTrackerIds: (chart.costTrackers || []).map((t) => t._id),
       circular: chart.circular || false,
       showOnDashboard: chart.showOnDashboard,
     });
@@ -216,9 +228,12 @@ export default function AdminCharts() {
     const payload = {
       name: form.name,
       type: form.type,
-      rangeHours: form.rangeHours,
+      ...rangeFields(form.range),
       showOnDashboard: form.showOnDashboard,
-      ...(isEnergyFlow
+      costTrackers: isCost ? form.costTrackerIds : [],
+      ...(isCost
+        ? { parameters: [], flowRoles: {}, devices: [], circular: false }
+        : isEnergyFlow
         ? {
             flowRoles: Object.fromEntries(
               Object.entries(form.flowRoles).filter(([, v]) => v)
@@ -292,7 +307,7 @@ export default function AdminCharts() {
                   <td>
                     {c.type === 'energyflow' || c.type === 'price_forecast'
                       ? 'live'
-                      : RANGE_OPTIONS.find((r) => r.value === c.rangeHours)?.label || `${c.rangeHours}u`}
+                      : rangeLabel(c)}
                   </td>
                   <td className="muted">{chartSummary(c)}</td>
                   <td>
@@ -357,6 +372,12 @@ export default function AdminCharts() {
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
                   Toont het totale verbruik (kWh) per gekozen parameter over de hele periode, als
                   aandeel van het geheel.
+                </p>
+              )}
+              {isCost && (
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Toont de kosten van de gekozen kostenberekeningen (zie Kosten) over de periode:
+                  per uur bij 24 uur, per dag bij 7 of 30 dagen en deze maand, per maand bij dit jaar.
                 </p>
               )}
               {isPriceForecast && (
@@ -449,7 +470,48 @@ export default function AdminCharts() {
               </div>
             ) : null}
 
-            {isEnergyFlow ? (
+            {isCost ? (
+              <>
+                <div className="form-field">
+                  <label>Periode</label>
+                  <select value={form.range} onChange={(e) => setForm({ ...form, range: e.target.value })}>
+                    {RANGE_OPTIONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Kostenberekeningen</label>
+                  {costTrackers.map((t) => (
+                    <label key={t._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.costTrackerIds.includes(t._id)}
+                        onChange={() =>
+                          setForm((f) => ({
+                            ...f,
+                            costTrackerIds: f.costTrackerIds.includes(t._id)
+                              ? f.costTrackerIds.filter((x) => x !== t._id)
+                              : [...f.costTrackerIds, t._id],
+                          }))
+                        }
+                      />
+                      {t.name}
+                    </label>
+                  ))}
+                  {costTrackers.length === 0 && (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Deze woning heeft nog geen kostenberekening. Maak er eerst een aan onder Kosten.
+                    </p>
+                  )}
+                  <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                    Niets aangevinkt = alle kostenberekeningen van de woning, ook die later bijkomen.
+                  </p>
+                </div>
+              </>
+            ) : isEnergyFlow ? (
               <div className="form-field">
                 <label>
                   <input
@@ -496,10 +558,7 @@ export default function AdminCharts() {
               <>
                 <div className="form-field">
                   <label>Periode</label>
-                  <select
-                    value={form.rangeHours}
-                    onChange={(e) => setForm({ ...form, rangeHours: Number(e.target.value) })}
-                  >
+                  <select value={form.range} onChange={(e) => setForm({ ...form, range: e.target.value })}>
                     {RANGE_OPTIONS.map((r) => (
                       <option key={r.value} value={r.value}>
                         {r.label}

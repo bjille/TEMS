@@ -13,6 +13,7 @@ import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
 import PieTotalsChart from '../../components/PieTotalsChart';
 import PriceForecastChart from '../../components/PriceForecastChart';
+import CostChart from '../../components/CostChart';
 import { WONING_STATUS_COLOR } from '../../palette';
 import { collectCategories, groupByCategory, categoryLabel } from './parameterCategories';
 import { fetchParameterCategories, selectParameterCategories } from './parameterCategoriesSlice';
@@ -90,6 +91,8 @@ function DashboardCharts({ woningId }) {
             <PieTotalsChart chart={chart} woningId={woningId} />
           ) : chart.type === 'price_forecast' ? (
             <PriceForecastChart chart={chart} woningId={woningId} />
+          ) : chart.type === 'cost' ? (
+            <CostChart chart={chart} woningId={woningId} />
           ) : (
             <ApexSeriesChart chart={chart} woningId={woningId} />
           )}

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
-const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast'];
+const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast', 'cost'];
+const RANGE_PERIODS = ['rolling', 'month', 'year'];
 
 // A user-defined chart combining one or more Parameters of a woning into a
 // single, pre-configured view (e.g. "Energiestromen": PV + batterij + net).
@@ -11,6 +12,10 @@ const dashboardChartSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     type: { type: String, enum: CHART_TYPES, default: 'line' },
     rangeHours: { type: Number, default: 24, min: 1 },
+    // 'rolling': the last `rangeHours` up to now. 'month' / 'year': the
+    // current calendar month / year (an overview, per day / per month),
+    // in which case rangeHours is ignored.
+    rangePeriod: { type: String, enum: RANGE_PERIODS, default: 'rolling' },
     // Used for type 'line' | 'area' | 'bar' | 'pie': the series to plot over
     // time, or (for 'pie') the parameters to total up over `rangeHours`.
     // For 'price_forecast' this holds exactly one parameter: the entity
@@ -42,6 +47,10 @@ const dashboardChartSchema = new mongoose.Schema(
         parent: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', default: null },
       },
     ],
+    // Used for type 'cost': which of the woning's cost calculations to show
+    // (see models/CostTracker.js), over the last `rangeHours`. Empty means
+    // all of them, including ones added later.
+    costTrackers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CostTracker' }],
     // Only meaningful for type 'energyflow': ECharts Sankey layout mode.
     circular: { type: Boolean, default: false },
     showOnDashboard: { type: Boolean, default: false },
@@ -52,3 +61,4 @@ const dashboardChartSchema = new mongoose.Schema(
 
 module.exports = mongoose.model('DashboardChart', dashboardChartSchema);
 module.exports.CHART_TYPES = CHART_TYPES;
+module.exports.RANGE_PERIODS = RANGE_PERIODS;

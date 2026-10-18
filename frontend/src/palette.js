@@ -28,6 +28,8 @@ export const PARAMETER_COLORS = {
   solar_power: CATEGORICAL.aqua,
   electricity_price: CATEGORICAL.yellow,
   grid_power: CATEGORICAL.magenta,
+  energy_meter: CATEGORICAL.magenta,
+  gas_price: CATEGORICAL.orange,
   switch_consumer: CATEGORICAL.green,
   switch_controllable: CATEGORICAL.violet,
   select_mode: CATEGORICAL.violet,

@@ -8,13 +8,9 @@ import ApexSeriesChart from '../../components/ApexSeriesChart';
 import EnergyFlowChart from '../../components/EnergyFlowChart';
 import PieTotalsChart from '../../components/PieTotalsChart';
 import PriceForecastChart from '../../components/PriceForecastChart';
+import CostChart from '../../components/CostChart';
 import BadgeBar from '../../components/BadgeBar';
-
-const RANGES = [
-  { label: '24 uur', hours: 24 },
-  { label: '7 dagen', hours: 24 * 7 },
-  { label: '30 dagen', hours: 24 * 30 },
-];
+import { RANGE_OPTIONS, rangeFields, rangeValue } from '../../components/chartRange';
 
 export default function ChartDetailPage() {
   const { woningId, chartId } = useParams();
@@ -22,7 +18,8 @@ export default function ChartDetailPage() {
   const charts = useSelector(selectChartsForWoning(woningId));
   const chart = charts.find((c) => c._id === chartId);
 
-  const [rangeHours, setRangeHours] = useState(null);
+  // Select value from RANGE_OPTIONS ('24', ..., 'month', 'year').
+  const [range, setRange] = useState(null);
 
   useLiveReadings(woningId);
 
@@ -33,8 +30,8 @@ export default function ChartDetailPage() {
 
   // Default the range picker to the chart's own configured period, once known.
   useEffect(() => {
-    if (chart && rangeHours === null) setRangeHours(chart.rangeHours);
-  }, [chart, rangeHours]);
+    if (chart && range === null) setRange(rangeValue(chart));
+  }, [chart, range]);
 
   // Without this memo, spreading `chart` into a new object on every render
   // gives ApexSeriesChart a new prop identity on every unrelated re-render
@@ -43,8 +40,8 @@ export default function ChartDetailPage() {
   // the chart instance repeatedly — including while a previous async
   // render is still in flight, which can leave the chart blank.
   const displayChart = useMemo(
-    () => (chart ? { ...chart, rangeHours: rangeHours || chart.rangeHours } : null),
-    [chart, rangeHours]
+    () => (chart ? { ...chart, ...(range ? rangeFields(range) : {}) } : null),
+    [chart, range]
   );
 
   if (!chart) {
@@ -69,6 +66,8 @@ export default function ChartDetailPage() {
         .filter(Boolean)
         .map((p) => p.label)
         .join(' · ')
+    : chart.type === 'cost'
+    ? (chart.costTrackers || []).map((t) => t.name).join(' · ')
     : chart.parameters.map((p) => p.label).join(' · ');
 
   return (
@@ -80,12 +79,12 @@ export default function ChartDetailPage() {
         <h1>{chart.name}</h1>
         {!hasNoRange && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {RANGES.map((r) => (
+            {RANGE_OPTIONS.map((r) => (
               <button
-                key={r.hours}
+                key={r.value}
                 className="btn"
-                style={rangeHours === r.hours ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}
-                onClick={() => setRangeHours(r.hours)}
+                style={range === r.value ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}
+                onClick={() => setRange(r.value)}
               >
                 {r.label}
               </button>
@@ -109,6 +108,8 @@ export default function ChartDetailPage() {
           <PieTotalsChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'price_forecast' ? (
           <PriceForecastChart chart={chart} woningId={woningId} height={480} />
+        ) : chart.type === 'cost' ? (
+          <CostChart chart={displayChart} woningId={woningId} height={480} />
         ) : (
           <ApexSeriesChart chart={displayChart} woningId={woningId} height={480} />
         )}
