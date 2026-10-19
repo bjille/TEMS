@@ -69,11 +69,16 @@ const woningenSlice = createSlice({
         state.status = 'succeeded';
         state.items = action.payload;
         if (state.selectedId === undefined) {
-          // Superadmins land on the cross-installation overview by default;
+          // A default woning set on the user (Admin → Gebruikers) wins.
+          // Otherwise superadmins land on the cross-installation overview;
           // regular users (usually one woning) go straight to their own.
+          const defaultWoning = action.payload.find((w) => w.isDefault);
           const isSuperadmin = action.payload[0]?.role === 'superadmin';
-          state.selectedId =
-            !isSuperadmin && action.payload.length > 0 ? action.payload[0]._id : null;
+          state.selectedId = defaultWoning
+            ? defaultWoning._id
+            : !isSuperadmin && action.payload.length > 0
+            ? action.payload[0]._id
+            : null;
         }
       })
       .addCase(fetchWoningen.rejected, (state, action) => {

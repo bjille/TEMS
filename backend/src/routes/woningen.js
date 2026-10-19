@@ -20,19 +20,23 @@ router.use(authenticate);
 
 // List woningen visible to the current user, each annotated with the
 // requester's role so the frontend can decide whether to show management
-// controls (e.g. creating automations is limited to 'owner'/superadmin).
+// controls (e.g. creating automations is limited to 'owner'/superadmin),
+// and with `isDefault` on the user's default woning, which the frontend
+// selects after login.
 router.get('/', async (req, res, next) => {
   try {
+    const defaultId = req.user.defaultWoning?.toString();
+    const annotate = (woning, role) => ({
+      ...woning.toObject(),
+      role,
+      isDefault: woning._id.toString() === defaultId,
+    });
     if (req.user.role === 'superadmin') {
       const woningen = await Woning.find().sort({ name: 1 });
-      return res.json(woningen.map((w) => ({ ...w.toObject(), role: 'superadmin' })));
+      return res.json(woningen.map((w) => annotate(w, 'superadmin')));
     }
     const links = await WoningUser.find({ user: req.user._id }).populate('woning');
-    res.json(
-      links
-        .filter((l) => l.woning)
-        .map((l) => ({ ...l.woning.toObject(), role: l.role }))
-    );
+    res.json(links.filter((l) => l.woning).map((l) => annotate(l.woning, l.role)));
   } catch (err) {
     next(err);
   }

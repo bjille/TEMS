@@ -7,6 +7,10 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     role: { type: String, enum: ['superadmin', 'user'], default: 'user' },
     active: { type: Boolean, default: true },
+    // Woning selected by default after login, for a user who can see more
+    // than one (and for a superadmin, instead of the "Alle installaties"
+    // overview). Ignored when the user no longer has access to it.
+    defaultWoning: { type: mongoose.Schema.Types.ObjectId, ref: 'Woning', default: null },
   },
   { timestamps: true }
 );
