@@ -57,6 +57,10 @@ const emptyForm = {
   flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis
   costTrackerIds: [], // empty = all of the woning's cost calculations
+  // Auto-include rule: every parameter of this type + unit, minus excludedIds.
+  autoType: '',
+  autoUnit: '',
+  excludedIds: [],
   circular: false,
   showOnDashboard: false,
 };
@@ -112,13 +116,46 @@ export default function AdminCharts() {
   const isPriceForecast = form.type === 'price_forecast';
   const isCost = form.type === 'cost';
   const [costTrackers, setCostTrackers] = useState([]);
+  // Line/area/bar/pie charts and the energyflow device breakdown can pull in
+  // their parameters automatically by type + unit.
+  const supportsAutoInclude = !isCost && !isPriceForecast;
+  const autoTypes = useMemo(
+    () => [...new Set(chartableParameters.map((p) => p.type))].sort(),
+    [chartableParameters]
+  );
+  const autoUnits = useMemo(
+    () => [
+      ...new Set(
+        chartableParameters.filter((p) => p.type === form.autoType).map((p) => (p.unit || '').trim())
+      ),
+    ],
+    [chartableParameters, form.autoType]
+  );
+  const matchesAuto = (p) =>
+    supportsAutoInclude &&
+    !!form.autoType &&
+    p.type === form.autoType &&
+    (p.unit || '').trim().toLowerCase() === form.autoUnit.trim().toLowerCase();
+  // What the rule currently picks up — for an energyflow diagram minus the
+  // sensors already used as a flow role or an explicitly placed device.
+  const autoMatches = chartableParameters.filter(
+    (p) =>
+      matchesAuto(p) &&
+      !(
+        isEnergyFlow &&
+        (Object.values(form.flowRoles).includes(p._id) || form.devices.some((d) => d.parameterId === p._id))
+      )
+  );
+  const explicitParameterIds = form.parameterIds.filter(
+    (id) => !matchesAuto(chartableParameters.find((p) => p._id === id) || {})
+  );
   const canSubmit = isCost
     ? true
     : isEnergyFlow
     ? Object.values(form.flowRoles).some(Boolean)
     : isPriceForecast
     ? form.parameterIds.length === 1
-    : form.parameterIds.length > 0;
+    : explicitParameterIds.length > 0 || autoMatches.length > 0;
 
   useEffect(() => {
     dispatch(fetchWoningen());
@@ -196,7 +233,9 @@ export default function AdminCharts() {
       name: chart.name,
       type: chart.type,
       range: rangeValue(chart),
-      parameterIds: chart.parameters.map((p) => p._id),
+      // Only the explicitly chosen ones: auto-included entries come back
+      // from the server marked `auto` and are managed by the rule below.
+      parameterIds: chart.parameters.filter((p) => !p.auto).map((p) => p._id),
       flowRoles: {
         pv: chart.flowRoles?.pv?._id || '',
         battery: chart.flowRoles?.battery?._id || '',
@@ -204,12 +243,15 @@ export default function AdminCharts() {
         thuis: chart.flowRoles?.thuis?._id || '',
       },
       devices: (chart.devices || [])
-        .filter((d) => d.parameter)
+        .filter((d) => d.parameter && !d.auto)
         .map((d) => ({
           parameterId: d.parameter._id,
           parentId: d.parent?._id || '',
         })),
       costTrackerIds: (chart.costTrackers || []).map((t) => t._id),
+      autoType: chart.autoInclude?.type || '',
+      autoUnit: chart.autoInclude?.unit || '',
+      excludedIds: (chart.excludedParameters || []).map((id) => String(id._id || id)),
       circular: chart.circular || false,
       showOnDashboard: chart.showOnDashboard,
     });
@@ -231,6 +273,11 @@ export default function AdminCharts() {
       ...rangeFields(form.range),
       showOnDashboard: form.showOnDashboard,
       costTrackers: isCost ? form.costTrackerIds : [],
+      autoInclude: supportsAutoInclude && form.autoType ? { type: form.autoType, unit: form.autoUnit } : { type: null, unit: '' },
+      excludedParameters:
+        supportsAutoInclude && form.autoType
+          ? form.excludedIds.filter((id) => autoMatches.some((p) => p._id === id))
+          : [],
       ...(isCost
         ? { parameters: [], flowRoles: {}, devices: [], circular: false }
         : isEnergyFlow
@@ -244,7 +291,7 @@ export default function AdminCharts() {
             circular: form.circular,
             parameters: [],
           }
-        : { parameters: form.parameterIds, flowRoles: {}, devices: [], circular: false }),
+        : { parameters: explicitParameterIds, flowRoles: {}, devices: [], circular: false }),
     };
     try {
       if (editingId) {
@@ -582,7 +629,7 @@ export default function AdminCharts() {
                       ))}
                     </select>
                   )}
-                  {groupByCategory(filteredChartableParameters).map(({ category, parameters: groupParams }) => (
+                  {groupByCategory(filteredChartableParameters.filter((p) => !matchesAuto(p))).map(({ category, parameters: groupParams }) => (
                     <div key={category} style={{ marginBottom: 10 }}>
                       <div className="muted" style={{ fontSize: '0.8em', fontWeight: 600, marginBottom: 4 }}>
                         {category}
@@ -613,6 +660,72 @@ export default function AdminCharts() {
                   )}
                 </div>
               </>
+            )}
+
+            {supportsAutoInclude && (
+              <div className="form-field">
+                <label>Automatisch toevoegen</label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <select
+                    value={form.autoType}
+                    onChange={(e) => {
+                      const autoType = e.target.value;
+                      const units = [
+                        ...new Set(
+                          chartableParameters.filter((p) => p.type === autoType).map((p) => (p.unit || '').trim())
+                        ),
+                      ];
+                      setForm({ ...form, autoType, autoUnit: units.includes('W') ? 'W' : units[0] || '', excludedIds: [] });
+                    }}
+                  >
+                    <option value="">— uit —</option>
+                    {autoTypes.map((t) => (
+                      <option key={t} value={t}>
+                        alle van type {t}
+                      </option>
+                    ))}
+                  </select>
+                  {form.autoType && (
+                    <select value={form.autoUnit} onChange={(e) => setForm({ ...form, autoUnit: e.target.value })}>
+                      {autoUnits.map((u) => (
+                        <option key={u} value={u}>
+                          met eenheid {u || '(geen)'}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                {form.autoType && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
+                    {autoMatches.map((p) => (
+                      <label key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={!form.excludedIds.includes(p._id)}
+                          onChange={() =>
+                            setForm((f) => ({
+                              ...f,
+                              excludedIds: f.excludedIds.includes(p._id)
+                                ? f.excludedIds.filter((x) => x !== p._id)
+                                : [...f.excludedIds, p._id],
+                            }))
+                          }
+                        />
+                        {p.label}
+                      </label>
+                    ))}
+                    {autoMatches.length === 0 && (
+                      <span className="muted">Geen parameters die hieraan voldoen.</span>
+                    )}
+                  </div>
+                )}
+                <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                  Elke parameter van dit type en deze eenheid komt automatisch in de grafiek
+                  {isEnergyFlow ? ' (als toestel rechtstreeks onder Thuis)' : ''}, ook die je later
+                  toevoegt. Vink uit wat er niet in hoort (bv. een totaal zoals Thuisverbruik) — dat
+                  blijft eruit. Parameters van een ander type kies je hierboven nog altijd zelf.
+                </p>
+              </div>
             )}
 
             <div className="form-field">

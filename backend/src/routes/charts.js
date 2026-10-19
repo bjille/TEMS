@@ -9,6 +9,7 @@ const { authenticate, requireSuperadmin } = require('../middleware/authenticate'
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { CHART_TYPES, RANGE_PERIODS } = require('../models/DashboardChart');
+const { PARAMETER_TYPES } = require('../models/Parameter');
 
 const router = express.Router({ mergeParams: true });
 
@@ -49,6 +50,52 @@ async function assertCostTrackersBelongToWoning(trackerIds, woningId) {
   if (count !== new Set(trackerIds.map(String)).size) {
     throw new ApiError(400, 'Eén of meer kostenberekeningen horen niet bij deze woning');
   }
+}
+
+const idOf = (ref) => String(ref?._id || ref);
+
+/**
+ * Turns chart documents into plain objects with their `autoInclude` rule
+ * applied: every parameter of the woning matching its type + unit that isn't
+ * excluded or already in the chart is appended — to `parameters`, or for an
+ * energyflow diagram to `devices` (top level, and never a sensor already
+ * used as one of its flow roles). Appended entries carry `auto: true`, so the
+ * admin form can tell them apart from the explicitly chosen ones (which are
+ * the only ones stored).
+ */
+async function expandAutoInclude(charts, woningId) {
+  const plain = charts.map((c) => (c.toObject ? c.toObject({ flattenMaps: true }) : c));
+  if (!plain.some((c) => c.autoInclude?.type)) return plain;
+  const all = await Parameter.find({ woning: woningId }).select(POPULATE_FIELDS).sort({ label: 1 }).lean();
+
+  return plain.map((chart) => {
+    const rule = chart.autoInclude;
+    if (!rule?.type) return chart;
+    const excluded = new Set((chart.excludedParameters || []).map(idOf));
+    const matches = all.filter(
+      (p) =>
+        p.type === rule.type &&
+        (p.unit || '').trim().toLowerCase() === (rule.unit || '').trim().toLowerCase() &&
+        !excluded.has(String(p._id))
+    );
+    if (chart.type === 'energyflow') {
+      const taken = new Set([
+        ...(chart.devices || []).map((d) => idOf(d.parameter)),
+        ...FLOW_ROLE_KEYS.map((k) => chart.flowRoles?.[k]).filter(Boolean).map(idOf),
+      ]);
+      const extra = matches
+        .filter((p) => !taken.has(String(p._id)))
+        .map((p) => ({ parameter: p, parent: null, auto: true }));
+      return { ...chart, devices: [...(chart.devices || []), ...extra] };
+    }
+    const taken = new Set((chart.parameters || []).map(idOf));
+    const extra = matches.filter((p) => !taken.has(String(p._id))).map((p) => ({ ...p, auto: true }));
+    return { ...chart, parameters: [...(chart.parameters || []), ...extra] };
+  });
+}
+
+async function expandOne(chart, woningId) {
+  return (await expandAutoInclude([chart], woningId))[0];
 }
 
 function collectFlowRoleIds(flowRoles) {
@@ -100,8 +147,11 @@ function validateShape(req) {
     if (!Array.isArray(req.body.parameters) || req.body.parameters.length !== 1) {
       throw new ApiError(400, 'Kies precies 1 parameter (de dynamische-prijzensensor) voor een prijzengrafiek');
     }
-  } else if (!Array.isArray(req.body.parameters) || req.body.parameters.length === 0) {
-    throw new ApiError(400, 'Kies minstens één parameter');
+  } else if (
+    (!Array.isArray(req.body.parameters) || req.body.parameters.length === 0) &&
+    !req.body.autoInclude?.type
+  ) {
+    throw new ApiError(400, 'Kies minstens één parameter, of laat parameters automatisch toevoegen');
   }
   if (req.body.devices) assertValidDeviceTree(req.body.devices);
 }
@@ -112,7 +162,7 @@ router.get('/', async (req, res, next) => {
     const charts = await DashboardChart.find({ woning: req.params.woningId })
       .sort({ createdAt: 1 })
       .populate(POPULATE_PATHS);
-    res.json(charts);
+    res.json(await expandAutoInclude(charts, req.params.woningId));
   } catch (err) {
     next(err);
   }
@@ -136,6 +186,11 @@ router.post(
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
+    body('autoInclude').optional().isObject(),
+    body('autoInclude.type').optional({ nullable: true, checkFalsy: true }).isIn(PARAMETER_TYPES),
+    body('autoInclude.unit').optional({ nullable: true }).isString(),
+    body('excludedParameters').optional().isArray(),
+    body('excludedParameters.*').optional().isMongoId(),
     body('costTrackers').optional().isArray(),
     body('costTrackers.*').optional().isMongoId(),
     body('circular').optional().isBoolean(),
@@ -148,7 +203,12 @@ router.post(
       const parameterIds = req.body.parameters || [];
       const devices = req.body.devices || [];
       await assertParametersBelongToWoning(
-        [...parameterIds, ...devices.map((d) => d.parameter), ...collectFlowRoleIds(req.body.flowRoles)],
+        [
+          ...parameterIds,
+          ...devices.map((d) => d.parameter),
+          ...collectFlowRoleIds(req.body.flowRoles),
+          ...(req.body.excludedParameters || []),
+        ],
         req.params.woningId
       );
       await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
@@ -163,13 +223,15 @@ router.post(
         flowRoles: req.body.flowRoles || {},
         devices,
         costTrackers: req.body.costTrackers || [],
+        autoInclude: req.body.autoInclude || { type: null, unit: '' },
+        excludedParameters: req.body.excludedParameters || [],
         circular: req.body.circular || false,
         showOnDashboard: req.body.showOnDashboard || false,
         createdBy: req.user._id,
       });
 
       const populated = await chart.populate(POPULATE_PATHS);
-      res.status(201).json(populated);
+      res.status(201).json(await expandOne(populated, req.params.woningId));
     } catch (err) {
       next(err);
     }
@@ -194,6 +256,11 @@ router.patch(
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
+    body('autoInclude').optional().isObject(),
+    body('autoInclude.type').optional({ nullable: true, checkFalsy: true }).isIn(PARAMETER_TYPES),
+    body('autoInclude.unit').optional({ nullable: true }).isString(),
+    body('excludedParameters').optional().isArray(),
+    body('excludedParameters.*').optional().isMongoId(),
     body('costTrackers').optional().isArray(),
     body('costTrackers.*').optional().isMongoId(),
     body('circular').optional().isBoolean(),
@@ -208,7 +275,8 @@ router.patch(
       if (
         req.body.parameters !== undefined ||
         req.body.flowRoles !== undefined ||
-        req.body.devices !== undefined
+        req.body.devices !== undefined ||
+        req.body.autoInclude !== undefined
       ) {
         const existing = await DashboardChart.findOne({
           _id: req.params.chartId,
@@ -221,6 +289,7 @@ router.patch(
             parameters: req.body.parameters ?? existing.parameters,
             flowRoles: req.body.flowRoles ?? existing.flowRoles,
             devices: req.body.devices ?? existing.devices,
+            autoInclude: req.body.autoInclude ?? existing.autoInclude,
           },
         });
         const devices = req.body.devices || [];
@@ -229,6 +298,7 @@ router.patch(
             ...(req.body.parameters || []),
             ...devices.map((d) => d.parameter),
             ...collectFlowRoleIds(req.body.flowRoles),
+            ...(req.body.excludedParameters || []),
           ],
           req.params.woningId
         );
@@ -242,7 +312,7 @@ router.patch(
         { new: true }
       ).populate(POPULATE_PATHS);
       if (!chart) throw new ApiError(404, 'Chart not found');
-      res.json(chart);
+      res.json(await expandOne(chart, req.params.woningId));
     } catch (err) {
       next(err);
     }
@@ -288,6 +358,7 @@ router.post(
           continue;
         }
         const { map, missing } = await buildParameterRemap(sourceParamIds, targetWoningId);
+        const { map: excludedMap } = await buildParameterRemap(chart.excludedParameters || [], targetWoningId);
         if (missing.length > 0) {
           results.push({
             woningId: targetWoningId,
@@ -315,6 +386,13 @@ router.post(
           // Cost calculations are per woning, so the copy shows all of the
           // target's own instead of pointing at the source's.
           costTrackers: [],
+          autoInclude: chart.autoInclude,
+          // Exclusions are only a refinement of the auto-include rule, so
+          // one that has no counterpart in the target is simply dropped
+          // rather than blocking the copy.
+          excludedParameters: (chart.excludedParameters || [])
+            .map((id) => excludedMap.get(id.toString()))
+            .filter(Boolean),
           circular: chart.circular,
           showOnDashboard: false,
           createdBy: req.user._id,

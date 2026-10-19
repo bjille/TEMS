@@ -51,6 +51,17 @@ const dashboardChartSchema = new mongoose.Schema(
     // (see models/CostTracker.js), over the last `rangeHours`. Empty means
     // all of them, including ones added later.
     costTrackers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CostTracker' }],
+    // Automatically includes every parameter of the woning with this type
+    // and unit — including ones added later — on top of the explicitly
+    // chosen `parameters` (or, for 'energyflow', as top-level `devices`),
+    // minus `excludedParameters`. E.g. type 'energy_consumption' + unit 'W'
+    // keeps a "Verbruikers" chart complete as new consumers are added. See
+    // routes/charts.js expandAutoInclude.
+    autoInclude: {
+      type: { type: String, default: null },
+      unit: { type: String, default: '' },
+    },
+    excludedParameters: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' }],
     // Only meaningful for type 'energyflow': ECharts Sankey layout mode.
     circular: { type: Boolean, default: false },
     showOnDashboard: { type: Boolean, default: false },
