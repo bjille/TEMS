@@ -55,7 +55,7 @@ function makeHaContext(woningId) {
  * HA's hourly long-term statistics for the meter and the price sensor over
  * [fromMs, toMs): per hour start (ms), the meter's consumption that hour
  * (the rise of its `sum`, which HA already corrects for daily resets) and
- * the price sensor's `mean` that hour. These go back as far as HA has
+ * the price sensor's `mean` that hour (or its `state`, see below). These go back as far as HA has
  * recorded the sensors, independent of whether TEMS was running. Either map
  * is empty when the sensor has no statistics (no state_class) or HA can't be
  * reached — the caller then falls back to readings.
@@ -70,7 +70,7 @@ async function fetchHourlyStatistics(meter, price, fromMs, toMs, haContext) {
       // One extra hour before, for the `sum` the first hour starts from.
       start: new Date(fromMs - HOUR_MS).toISOString(),
       end: new Date(toMs).toISOString(),
-      types: ['sum', 'mean'],
+      types: ['sum', 'mean', 'state'],
     });
   } catch (err) {
     console.error(`Statistics fetch failed for ${meter.entityId}:`, err.message);
@@ -90,7 +90,11 @@ async function fetchHourlyStatistics(meter, price, fromMs, toMs, haContext) {
 
   const prices = new Map();
   for (const row of result[price.entityId] || []) {
-    if (typeof row.mean === 'number') prices.set(startMs(row), row.mean);
+    // A 'measurement' sensor gets an hourly mean; a price sensor declared
+    // as state_class 'total' (e.g. Frank Energie's gas prices) only gets
+    // its state at the end of the hour.
+    const value = typeof row.mean === 'number' ? row.mean : row.state;
+    if (typeof value === 'number') prices.set(startMs(row), value);
   }
   return { usage, prices };
 }
@@ -254,8 +258,15 @@ class CostEngine {
     this.task = cron.schedule(TICK_CRON, () => {
       this.tick().catch((err) => console.error('Cost engine tick failed:', err));
     });
-    // Catch up right away on whatever was missed while the backend was down.
-    this.tick().catch((err) => console.error('Cost engine initial tick failed:', err));
+    // Drop indexes left over from an earlier shape of EnergyCost (keyed per
+    // woning + medium) before computing anything: their unique constraint
+    // would otherwise make two calculations of the same woning collide on
+    // every hour. Then catch up right away on whatever was missed while the
+    // backend was down.
+    EnergyCost.syncIndexes()
+      .catch((err) => console.error('Failed to sync EnergyCost indexes:', err.message))
+      .then(() => this.tick())
+      .catch((err) => console.error('Cost engine initial tick failed:', err));
   }
 
   stop() {

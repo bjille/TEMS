@@ -237,22 +237,21 @@ function TrackerForm({ woningId, parameters, tracker, onDone }) {
           ))}
         </select>
       </div>
-      {(needsConversion || form.meterConversionFactor !== '1') && (
-        <div className="form-field">
-          <label>Omrekenfactor m³ → kWh</label>
-          <input
-            type="number"
-            step="any"
-            min="0"
-            value={form.meterConversionFactor}
-            onChange={(e) => set({ meterConversionFactor: e.target.value })}
-          />
-          <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
-            De gasmeter telt m³, de prijs is per kWh. Vul de omrekenfactor van je factuur in
-            (meestal 10–11 kWh/m³).
-          </p>
-        </div>
-      )}
+      <div className="form-field">
+        <label>Omrekenfactor verbruik → eenheid van de prijs</label>
+        <input
+          type="number"
+          step="any"
+          min="0"
+          value={form.meterConversionFactor}
+          onChange={(e) => set({ meterConversionFactor: e.target.value })}
+        />
+        <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+          {needsConversion
+            ? 'Deze meter telt m³, de prijs is per kWh: vul de omrekenfactor van je factuur in (meestal 10–11 kWh/m³).'
+            : 'Meestal 1. Telt de meter in m³ (gas) en is de prijs per kWh, vul dan de omrekenfactor van je factuur in (meestal 10–11 kWh/m³).'}
+        </p>
+      </div>
       <div className="form-field">
         <label>Berekenen vanaf</label>
         <input type="date" value={form.validFrom} onChange={(e) => set({ validFrom: e.target.value })} required />
