@@ -436,6 +436,114 @@ async function resolveHourlyConsumptionShares(consumptionParameter) {
   return parameter ? hourlyConsumptionProfile(parameter) : null;
 }
 
+// Reconstructs today's actual grid-charging ON/OFF intervals from the
+// plan's CommandLog history, rather than from the (forward-looking, and
+// never persisted hour-by-hour) chargeHours the engine computes at each
+// tick. A contiguous ON period starts at the latest successful command that
+// turned charging on — including one issued before today, if it was still
+// on at midnight — and ends at the next successful command that turns it
+// off, or at `now` if it's still charging. Only successful commands count:
+// a failed HA call never actually changed the switch's real state.
+async function todaysChargeIntervals(plan, dayStart, now) {
+  const isOn = (log) =>
+    log.action === 'select_option' ? log.payload?.option === plan.chargeOnOption : log.action === 'turn_on';
+
+  const [before, today] = await Promise.all([
+    CommandLog.findOne({ smartChargePlan: plan._id, result: 'success', createdAt: { $lt: dayStart } })
+      .sort({ createdAt: -1 })
+      .lean(),
+    CommandLog.find({
+      smartChargePlan: plan._id,
+      result: 'success',
+      createdAt: { $gte: dayStart, $lte: now },
+    })
+      .sort({ createdAt: 1 })
+      .lean(),
+  ]);
+
+  const intervals = [];
+  let onSince = before && isOn(before) ? dayStart : null;
+  for (const log of today) {
+    const on = isOn(log);
+    if (on && onSince === null) onSince = log.createdAt;
+    else if (!on && onSince !== null) {
+      intervals.push({ start: onSince, end: log.createdAt });
+      onSince = null;
+    }
+  }
+  if (onSince !== null) intervals.push({ start: onSince, end: now });
+  return intervals;
+}
+
+// Total hours of overlap between a set of {start, end} intervals and
+// [rangeStartMs, rangeEndMs) — used below to find how much of a given
+// price hour was actually spent charging.
+function overlapHours(intervals, rangeStartMs, rangeEndMs) {
+  let hours = 0;
+  for (const { start, end } of intervals) {
+    const from = Math.max(new Date(start).getTime(), rangeStartMs);
+    const to = Math.min(new Date(end).getTime(), rangeEndMs);
+    if (to > from) hours += (to - from) / 3600000;
+  }
+  return hours;
+}
+
+// What today's grid-charging actually cost versus what that same amount of
+// energy would have cost at the plan's avoidedPrice reference (see
+// computeAvoidedPrice) — i.e. what charging during specifically the cheap
+// hours saved today, compared to having bought the same kWh at a "normal"
+// moment instead. Reuses `forecastPoints` (today's hours are already in
+// there via the HA price entity's `prices_today` attribute) rather than
+// fetching HA again, and the same `hourlyConsumptionShares` evaluatePlan
+// already resolved for its own avoidedPrice calculation. Returns null when
+// today's price points aren't known yet (e.g. right after midnight, before
+// HA has published them).
+async function computeTodaysSavings(plan, forecastPoints, hourlyConsumptionShares) {
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 3600000);
+  const now = new Date();
+
+  const todaysPoints = forecastPoints.filter((p) => {
+    const t = new Date(p.timestamp).getTime();
+    return t >= dayStart.getTime() && t < dayEnd.getTime();
+  });
+  if (todaysPoints.length === 0) return null;
+
+  const intervals = await todaysChargeIntervals(plan, dayStart, now);
+
+  let totalKwh = 0;
+  let actualCostEUR = 0;
+  const otherPoints = [];
+  for (const p of todaysPoints) {
+    const hourStartMs = new Date(p.timestamp).getTime();
+    const hoursCharged = overlapHours(intervals, hourStartMs, hourStartMs + 3600000);
+    if (hoursCharged > 0) {
+      const kwh = hoursCharged * plan.maxChargePowerKw;
+      totalKwh += kwh;
+      actualCostEUR += kwh * p.price;
+    } else {
+      otherPoints.push(p);
+    }
+  }
+
+  const { price: avoidedPrice, basis: avoidedPriceBasis } = computeAvoidedPrice(
+    otherPoints,
+    plan.avoidedPriceMode,
+    hourlyConsumptionShares
+  );
+  const hypotheticalCostEUR = avoidedPrice === null ? null : totalKwh * avoidedPrice;
+
+  return {
+    totalKwh,
+    actualCostEUR,
+    avoidedPrice,
+    avoidedPriceBasis,
+    hypotheticalCostEUR,
+    savingsEUR: hypotheticalCostEUR === null ? null : hypotheticalCostEUR - actualCostEUR,
+  };
+}
+
 // Gathers a plan's live inputs (current SOC, remaining solar forecast, price
 // curve) and runs them through computeChargePlan. Shared by the read-only
 // status endpoint (a user looking at the recommendation) and the engine's
@@ -502,6 +610,7 @@ async function evaluatePlan(plan) {
 
   const nowHourMs = floorToHourMs(new Date());
   const shouldChargeNow = plan_.chargeHours.some((h) => new Date(h.timestamp).getTime() === nowHourMs);
+  const todaySavings = await computeTodaysSavings(plan, forecast.points, hourlyConsumptionShares);
 
   return {
     ready: true,
@@ -511,6 +620,7 @@ async function evaluatePlan(plan) {
     priceUnit: forecast.unit,
     gridTargetSocPercent: plan.gridTargetSocPercent ?? null,
     shouldChargeNow,
+    todaySavings,
     ...plan_,
   };
 }
@@ -678,6 +788,8 @@ module.exports = {
   evaluatePlan,
   averageDailyConsumptionKwh,
   hourlyConsumptionProfile,
+  computeTodaysSavings,
+  todaysChargeIntervals,
   SMART_CHARGE_POPULATE_PATHS: [
     'socParameter',
     'solarRemainingParameter',

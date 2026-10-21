@@ -66,6 +66,18 @@ function formatKwh(value) {
   return typeof value === 'number' ? `${value.toFixed(2)} kWh` : '?';
 }
 
+// priceUnit is a per-kWh unit like "€/kWh" or "EUR/kWh" — strip the "/kWh"
+// to get a plain currency symbol/code for a total cost instead of a price.
+function formatCost(value, priceUnit) {
+  if (typeof value !== 'number') return '?';
+  const symbol = (priceUnit || '').replace(/\/?k?wh/i, '').trim() || '€';
+  return `${symbol}${value.toFixed(2)}`;
+}
+
+function priceBasisLabel(basis) {
+  return basis === 'consumption_weighted' ? 'verbruiksgewogen' : basis === 'max' ? 'hoogste' : 'gemiddelde';
+}
+
 function formatHour(timestamp) {
   return new Date(timestamp).toLocaleString('nl-BE', {
     weekday: 'short',
@@ -127,12 +139,8 @@ function PlanStatus({ status }) {
             : ''}
           Met {Math.round((1 - status.roundTripEfficiency) * 100)}% omzettingsverlies (laden + ontladen) loont
           laden enkel onder {status.breakEvenPrice.toFixed(3)} {status.priceUnit} (
-          {status.avoidedPriceBasis === 'consumption_weighted'
-            ? 'verbruiksgewogen'
-            : status.avoidedPriceBasis === 'max'
-            ? 'hoogste'
-            : 'gemiddelde'}{' '}
-          prijs van de andere uren: {status.avoidedPrice.toFixed(3)} {status.priceUnit}).
+          {priceBasisLabel(status.avoidedPriceBasis)} prijs van de andere uren: {status.avoidedPrice.toFixed(3)}{' '}
+          {status.priceUnit}).
         </p>
       )}
       {status.deadlineAt && (
@@ -163,6 +171,30 @@ function PlanStatus({ status }) {
             </span>
           ))}
         </div>
+      )}
+      {status.todaySavings && (
+        <p
+          className="muted"
+          style={{ margin: '8px 0 0', fontSize: '0.85em', paddingTop: 8, borderTop: '1px solid var(--border-color, #e5e5e5)' }}
+        >
+          {status.todaySavings.totalKwh <= 0.01 ? (
+            'Nog niet van het net geladen vandaag.'
+          ) : (
+            <>
+              Vandaag {formatKwh(status.todaySavings.totalKwh)} van het net geladen voor{' '}
+              {formatCost(status.todaySavings.actualCostEUR, status.priceUnit)}
+              {typeof status.todaySavings.savingsEUR === 'number' && (
+                <>
+                  {' '}
+                  — tegen de {priceBasisLabel(status.todaySavings.avoidedPriceBasis)} prijs van de andere uren had
+                  dat {formatCost(status.todaySavings.hypotheticalCostEUR, status.priceUnit)} gekost, dus{' '}
+                  <strong>{formatCost(status.todaySavings.savingsEUR, status.priceUnit)} bespaard</strong> door
+                  slim te laden.
+                </>
+              )}
+            </>
+          )}
+        </p>
       )}
     </div>
   );
