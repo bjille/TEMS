@@ -319,4 +319,4 @@ class CostEngine {
 
 const costEngine = new CostEngine();
 
-module.exports = { costEngine, counterDeltas, priceScale, fetchHourlyStatistics, makeHaContext };
+module.exports = { costEngine, counterDeltas, priceScale, fetchHourlyStatistics, makeHaContext, loadSeries };

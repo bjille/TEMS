@@ -1,13 +1,17 @@
 const express = require('express');
-const { body, validationResult } = require('express-validator');
+const { body, query, validationResult } = require('express-validator');
 const SmartChargePlan = require('../models/SmartChargePlan');
+const SmartChargeHistory = require('../models/SmartChargeHistory');
 const Parameter = require('../models/Parameter');
 const { authenticate } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { smartChargeEngine, evaluatePlan } = require('../services/smartChargeEngine');
+const { makeHaContext, loadSeries, counterDeltas } = require('../services/costEngine');
 
 const router = express.Router({ mergeParams: true });
+
+const HOUR_MS = 3600 * 1000;
 
 // Includes controlDomain (unlike the display-only fields alone) because
 // evaluateAndAct needs it to know which HA service domain to call for
@@ -311,6 +315,187 @@ router.post('/:planId/recompute', authorizeWoning(['owner']), async (req, res, n
   }
 });
 
+const ALIGN = {
+  hour: (d) => {
+    d.setMinutes(0, 0, 0);
+    return d;
+  },
+  day: (d) => {
+    d.setHours(0, 0, 0, 0);
+    return d;
+  },
+  month: (d) => {
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  },
+};
+
+function nextBucket(date, interval) {
+  const d = new Date(date);
+  if (interval === 'hour') d.setHours(d.getHours() + 1);
+  else if (interval === 'day') d.setDate(d.getDate() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  return d;
+}
+
+// Mirrors routes/costs.js's own bucketing (kept local rather than shared —
+// the two are a handful of lines each and evolve independently): maps a
+// timestamp to the index of the last bucket starting at or before it.
+function makeBucketIndex(bucketStarts) {
+  return (t) => {
+    let lo = 0;
+    let hi = bucketStarts.length - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (bucketStarts[mid].getTime() <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+}
+
+// Hourly rise of a cumulative grid-import meter over [fromMs, toMs), for the
+// optional "totaal verbruik van het net" line on a smart-charge-savings
+// chart — same statistics-first, Readings-fallback approach costEngine
+// uses for a CostTracker's own meter, just without a price attached.
+async function hourlyGridConsumption(meterParameter, woningId, fromMs, toMs) {
+  const haContext = makeHaContext(woningId);
+  const client = await haContext.client();
+  const byHour = new Map();
+
+  if (client) {
+    try {
+      const result = await client.fetchStatistics([meterParameter.entityId], {
+        start: new Date(fromMs - HOUR_MS).toISOString(),
+        end: new Date(toMs).toISOString(),
+        types: ['sum'],
+      });
+      let previousSum = null;
+      for (const row of result[meterParameter.entityId] || []) {
+        if (typeof row.sum !== 'number') continue;
+        const t = typeof row.start === 'number' ? row.start : new Date(row.start).getTime();
+        if (previousSum !== null && t >= fromMs) byHour.set(t, Math.max(0, row.sum - previousSum));
+        previousSum = row.sum;
+      }
+    } catch (err) {
+      console.error(`Grid consumption statistics fetch failed for ${meterParameter.entityId}:`, err.message);
+    }
+  }
+
+  const missingHours = [];
+  for (let t = fromMs; t < toMs; t += HOUR_MS) if (!byHour.has(t)) missingHours.push(t);
+  if (missingHours.length > 0) {
+    const series = await loadSeries(meterParameter, new Date(fromMs), new Date(toMs), haContext);
+    const fallback = counterDeltas(series, missingHours);
+    missingHours.forEach((t, i) => byHour.set(t, fallback[i]));
+  }
+  return byHour;
+}
+
+// Per-plan grid-charging history (kWh, actual cost, hypothetical cost at
+// the avoidedPrice reference) plus, optionally, the woning's total grid
+// import — bucketed into `interval`-sized buckets over [from, to). Drives
+// the 'smart_charge_savings' DashboardChart type: "totaal verbruik van het
+// net" next to "waarvan laden batterij" and what that would have cost
+// without smart timing.
+router.get(
+  '/history',
+  [
+    query('from').isISO8601(),
+    query('to').isISO8601(),
+    query('interval').optional().isIn(['hour', 'day', 'month']),
+    query('plans').optional().isString(),
+    query('gridConsumptionParameter').optional().isMongoId(),
+  ],
+  async (req, res, next) => {
+    try {
+      checkValidation(req);
+      const interval = req.query.interval || 'day';
+      const from = ALIGN[interval](new Date(req.query.from));
+      const to = new Date(req.query.to);
+      const fromMs = from.getTime();
+      const toMs = to.getTime();
+
+      const planIds = req.query.plans ? req.query.plans.split(',').filter(Boolean) : [];
+      const planFilter = { woning: req.params.woningId, ...(planIds.length > 0 ? { _id: { $in: planIds } } : {}) };
+      const plans = await SmartChargePlan.find(planFilter).select('name priceParameter').populate('priceParameter', 'unit');
+
+      const rows = await SmartChargeHistory.find({
+        woning: req.params.woningId,
+        plan: { $in: plans.map((p) => p._id) },
+        start: { $gte: from, $lt: to },
+      })
+        .sort({ start: 1 })
+        .lean();
+
+      const bucketStarts = [];
+      for (let d = new Date(from); d < to; d = nextBucket(d, interval)) bucketStarts.push(d);
+      const bucketIndex = makeBucketIndex(bucketStarts);
+
+      const byPlan = new Map(
+        plans.map((p) => [
+          p._id.toString(),
+          {
+            _id: p._id,
+            name: p.name,
+            priceUnit: p.priceParameter?.unit || '',
+            buckets: bucketStarts.map((s) => ({ start: s.toISOString(), gridChargedKwh: 0, actualCost: 0, hypotheticalCost: 0 })),
+          },
+        ])
+      );
+      for (const row of rows) {
+        const entry = byPlan.get(row.plan.toString());
+        if (!entry || bucketStarts.length === 0) continue;
+        const bucket = entry.buckets[bucketIndex(row.start.getTime())];
+        bucket.gridChargedKwh += row.gridChargedKwh || 0;
+        bucket.actualCost += row.actualCost || 0;
+        if (typeof row.hypotheticalCost === 'number') bucket.hypotheticalCost += row.hypotheticalCost;
+      }
+
+      let gridConsumption = null;
+      if (req.query.gridConsumptionParameter) {
+        const meterParameter = await Parameter.findOne({
+          _id: req.query.gridConsumptionParameter,
+          woning: req.params.woningId,
+        }).lean();
+        if (meterParameter) {
+          const hourly = await hourlyGridConsumption(meterParameter, req.params.woningId, fromMs, toMs);
+          const gcBuckets = bucketStarts.map((s) => ({ start: s.toISOString(), kwh: 0 }));
+          if (bucketStarts.length > 0) {
+            for (const [hourMs, kwh] of hourly) {
+              if (hourMs < fromMs || hourMs >= toMs) continue;
+              gcBuckets[bucketIndex(hourMs)].kwh += kwh;
+            }
+          }
+          gridConsumption = {
+            unit: meterParameter.unit || 'kWh',
+            buckets: gcBuckets,
+            total: gcBuckets.reduce((s, b) => s + b.kwh, 0),
+          };
+        }
+      }
+
+      res.json({
+        interval,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        plans: [...byPlan.values()].map((p) => ({
+          ...p,
+          totals: {
+            gridChargedKwh: p.buckets.reduce((s, b) => s + b.gridChargedKwh, 0),
+            actualCost: p.buckets.reduce((s, b) => s + b.actualCost, 0),
+            hypotheticalCost: p.buckets.reduce((s, b) => s + b.hypotheticalCost, 0),
+          },
+        })),
+        gridConsumption,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.delete('/:planId', authorizeWoning(['owner']), async (req, res, next) => {
   try {
     const plan = await SmartChargePlan.findOneAndDelete({
@@ -318,6 +503,7 @@ router.delete('/:planId', authorizeWoning(['owner']), async (req, res, next) => 
       woning: req.params.woningId,
     });
     if (!plan) throw new ApiError(404, 'Smart charge plan not found');
+    await SmartChargeHistory.deleteMany({ plan: plan._id });
     res.status(204).send();
   } catch (err) {
     next(err);

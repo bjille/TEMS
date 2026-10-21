@@ -3,6 +3,7 @@ const { body, validationResult } = require('express-validator');
 const DashboardChart = require('../models/DashboardChart');
 const Parameter = require('../models/Parameter');
 const CostTracker = require('../models/CostTracker');
+const SmartChargePlan = require('../models/SmartChargePlan');
 const Woning = require('../models/Woning');
 const { buildParameterRemap } = require('../services/parameterRemap');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
@@ -24,6 +25,8 @@ const POPULATE_PATHS = [
   { path: 'devices.parameter', select: POPULATE_FIELDS },
   { path: 'devices.parent', select: POPULATE_FIELDS },
   { path: 'costTrackers', select: 'name' },
+  { path: 'smartChargePlans', select: 'name' },
+  { path: 'gridConsumptionParameter', select: POPULATE_FIELDS },
 ];
 
 function checkValidation(req) {
@@ -49,6 +52,14 @@ async function assertCostTrackersBelongToWoning(trackerIds, woningId) {
   const count = await CostTracker.countDocuments({ _id: { $in: trackerIds }, woning: woningId });
   if (count !== new Set(trackerIds.map(String)).size) {
     throw new ApiError(400, 'Eén of meer kostenberekeningen horen niet bij deze woning');
+  }
+}
+
+async function assertSmartChargePlansBelongToWoning(planIds, woningId) {
+  if (!planIds || planIds.length === 0) return;
+  const count = await SmartChargePlan.countDocuments({ _id: { $in: planIds }, woning: woningId });
+  if (count !== new Set(planIds.map(String)).size) {
+    throw new ApiError(400, 'Eén of meer slim-laadplannen horen niet bij deze woning');
   }
 }
 
@@ -141,8 +152,10 @@ function validateShape(req) {
     if (collectFlowRoleIds(req.body.flowRoles).length === 0) {
       throw new ApiError(400, 'Kies minstens één parameter (PV, batterij of net) voor een energieflow-diagram');
     }
-  } else if (type === 'cost') {
-    // No parameters needed: the cost calculations carry their own sensors.
+  } else if (type === 'cost' || type === 'smart_charge_savings') {
+    // No parameters needed: the cost calculations / smart-charge plans carry
+    // their own sensors — gridConsumptionParameter (smart_charge_savings
+    // only) is optional, not required for the chart to be meaningful.
   } else if (type === 'price_forecast') {
     if (!Array.isArray(req.body.parameters) || req.body.parameters.length !== 1) {
       throw new ApiError(400, 'Kies precies 1 parameter (de dynamische-prijzensensor) voor een prijzengrafiek');
@@ -193,6 +206,9 @@ router.post(
     body('excludedParameters.*').optional().isMongoId(),
     body('costTrackers').optional().isArray(),
     body('costTrackers.*').optional().isMongoId(),
+    body('smartChargePlans').optional().isArray(),
+    body('smartChargePlans.*').optional().isMongoId(),
+    body('gridConsumptionParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -208,10 +224,12 @@ router.post(
           ...devices.map((d) => d.parameter),
           ...collectFlowRoleIds(req.body.flowRoles),
           ...(req.body.excludedParameters || []),
+          ...(req.body.gridConsumptionParameter ? [req.body.gridConsumptionParameter] : []),
         ],
         req.params.woningId
       );
       await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
+      await assertSmartChargePlansBelongToWoning(req.body.smartChargePlans, req.params.woningId);
 
       const chart = await DashboardChart.create({
         woning: req.params.woningId,
@@ -223,6 +241,8 @@ router.post(
         flowRoles: req.body.flowRoles || {},
         devices,
         costTrackers: req.body.costTrackers || [],
+        smartChargePlans: req.body.smartChargePlans || [],
+        gridConsumptionParameter: req.body.gridConsumptionParameter || undefined,
         autoInclude: req.body.autoInclude || { type: null, unit: '' },
         excludedParameters: req.body.excludedParameters || [],
         circular: req.body.circular || false,
@@ -263,6 +283,9 @@ router.patch(
     body('excludedParameters.*').optional().isMongoId(),
     body('costTrackers').optional().isArray(),
     body('costTrackers.*').optional().isMongoId(),
+    body('smartChargePlans').optional().isArray(),
+    body('smartChargePlans.*').optional().isMongoId(),
+    body('gridConsumptionParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -299,16 +322,27 @@ router.patch(
             ...devices.map((d) => d.parameter),
             ...collectFlowRoleIds(req.body.flowRoles),
             ...(req.body.excludedParameters || []),
+            ...(req.body.gridConsumptionParameter ? [req.body.gridConsumptionParameter] : []),
           ],
           req.params.woningId
         );
+      } else if (req.body.gridConsumptionParameter) {
+        await assertParametersBelongToWoning([req.body.gridConsumptionParameter], req.params.woningId);
       }
 
       await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
+      await assertSmartChargePlansBelongToWoning(req.body.smartChargePlans, req.params.woningId);
+
+      const updates = { ...req.body };
+      // An empty selection clears the (optional) grid-consumption parameter
+      // rather than being cast to an ObjectId, which would throw.
+      if ('gridConsumptionParameter' in updates && !updates.gridConsumptionParameter) {
+        updates.gridConsumptionParameter = null;
+      }
 
       const chart = await DashboardChart.findOneAndUpdate(
         { _id: req.params.chartId, woning: req.params.woningId },
-        req.body,
+        updates,
         { new: true }
       ).populate(POPULATE_PATHS);
       if (!chart) throw new ApiError(404, 'Chart not found');
@@ -359,6 +393,10 @@ router.post(
         }
         const { map, missing } = await buildParameterRemap(sourceParamIds, targetWoningId);
         const { map: excludedMap } = await buildParameterRemap(chart.excludedParameters || [], targetWoningId);
+        const { map: gridMap } = await buildParameterRemap(
+          chart.gridConsumptionParameter ? [chart.gridConsumptionParameter] : [],
+          targetWoningId
+        );
         if (missing.length > 0) {
           results.push({
             woningId: targetWoningId,
@@ -383,9 +421,14 @@ router.post(
             parameter: map.get(d.parameter.toString()),
             parent: d.parent ? map.get(d.parent.toString()) : null,
           })),
-          // Cost calculations are per woning, so the copy shows all of the
-          // target's own instead of pointing at the source's.
+          // Cost calculations and smart-charge plans are per woning, so the
+          // copy shows all of the target's own instead of pointing at the
+          // source's.
           costTrackers: [],
+          smartChargePlans: [],
+          gridConsumptionParameter: chart.gridConsumptionParameter
+            ? gridMap.get(chart.gridConsumptionParameter.toString())
+            : undefined,
           autoInclude: chart.autoInclude,
           // Exclusions are only a refinement of the auto-include rule, so
           // one that has no counterpart in the target is simply dropped

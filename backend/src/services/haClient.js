@@ -113,11 +113,16 @@ class HaClient extends EventEmitter {
    * API (`/api/history/period/<start>`), used to drive chart drill-downs
    * without persisting readings ourselves.
    */
-  async fetchHistory(entityId, { start, end } = {}) {
+  // `minimalResponse: false` keeps full attributes on every returned state
+  // instead of just the first — needed to read a dynamic-prices entity's
+  // `prices_today`/`prices_tomorrow` attributes as they stood on past days
+  // (see smartChargeEngine.js's history backfill), since HA's long-term
+  // statistics track only the numeric state, never attributes.
+  async fetchHistory(entityId, { start, end, minimalResponse = true } = {}) {
     const path = start
       ? `/api/history/period/${encodeURIComponent(start)}`
       : '/api/history/period';
-    const params = { filter_entity_id: entityId, minimal_response: true };
+    const params = { filter_entity_id: entityId, minimal_response: minimalResponse };
     if (end) params.end_time = end;
 
     const res = await axios.get(`${this.baseUrl}${path}`, {

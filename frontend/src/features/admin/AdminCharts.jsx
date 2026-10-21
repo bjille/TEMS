@@ -16,6 +16,7 @@ const TYPE_OPTIONS = [
   { value: 'energyflow', label: 'Energieflow' },
   { value: 'price_forecast', label: 'Dynamische prijzen (uurcurve)' },
   { value: 'cost', label: 'Kosten' },
+  { value: 'smart_charge_savings', label: 'Slim laden — besparing' },
 ];
 
 
@@ -57,6 +58,8 @@ const emptyForm = {
   flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis
   costTrackerIds: [], // empty = all of the woning's cost calculations
+  smartChargePlanIds: [], // empty = all of the woning's smart-charge plans
+  gridConsumptionParameterId: '', // optional: cumulative grid-import meter for the "totaal" line
   // Auto-include rule: every parameter of this type + unit, minus excludedIds.
   autoType: '',
   autoUnit: '',
@@ -69,6 +72,11 @@ function chartSummary(chart) {
   if (chart.type === 'cost') {
     const names = (chart.costTrackers || []).map((t) => t.name);
     return names.length > 0 ? names.join(', ') : 'Alle kostenberekeningen';
+  }
+  if (chart.type === 'smart_charge_savings') {
+    const names = (chart.smartChargePlans || []).map((p) => p.name);
+    const base = names.length > 0 ? names.join(', ') : 'Alle slim-laadplannen';
+    return chart.gridConsumptionParameter ? `${base} · ${chart.gridConsumptionParameter.label}` : base;
   }
   if (chart.type === 'energyflow') {
     const roles = Object.values(chart.flowRoles || {})
@@ -115,10 +123,22 @@ export default function AdminCharts() {
   const isEnergyFlow = form.type === 'energyflow';
   const isPriceForecast = form.type === 'price_forecast';
   const isCost = form.type === 'cost';
+  const isSmartChargeSavings = form.type === 'smart_charge_savings';
   const [costTrackers, setCostTrackers] = useState([]);
+  const [smartChargePlans, setSmartChargePlans] = useState([]);
+  // A cumulative grid-import meter (kWh) — same shape as a CostTracker's own
+  // meterParameter — for the savings chart's optional "totaal verbruik van
+  // het net" line.
+  const gridConsumptionCandidates = useMemo(
+    () =>
+      chartableParameters.filter(
+        (p) => (p.type === 'grid_power' || p.type === 'energy_consumption') && (p.unit || '').trim().toLowerCase() === 'kwh'
+      ),
+    [chartableParameters]
+  );
   // Line/area/bar/pie charts and the energyflow device breakdown can pull in
   // their parameters automatically by type + unit.
-  const supportsAutoInclude = !isCost && !isPriceForecast;
+  const supportsAutoInclude = !isCost && !isSmartChargeSavings && !isPriceForecast;
   const autoTypes = useMemo(
     () => [...new Set(chartableParameters.map((p) => p.type))].sort(),
     [chartableParameters]
@@ -149,7 +169,7 @@ export default function AdminCharts() {
   const explicitParameterIds = form.parameterIds.filter(
     (id) => !matchesAuto(chartableParameters.find((p) => p._id === id) || {})
   );
-  const canSubmit = isCost
+  const canSubmit = isCost || isSmartChargeSavings
     ? true
     : isEnergyFlow
     ? Object.values(form.flowRoles).some(Boolean)
@@ -179,6 +199,10 @@ export default function AdminCharts() {
         .get(`/woningen/${woningId}/costs/trackers`)
         .then(({ data }) => setCostTrackers(data))
         .catch(() => setCostTrackers([]));
+      api
+        .get(`/woningen/${woningId}/smart-charge`)
+        .then(({ data }) => setSmartChargePlans(data))
+        .catch(() => setSmartChargePlans([]));
     }
     setParameterCategoryFilter('');
   }, [woningId, dispatch]);
@@ -249,6 +273,8 @@ export default function AdminCharts() {
           parentId: d.parent?._id || '',
         })),
       costTrackerIds: (chart.costTrackers || []).map((t) => t._id),
+      smartChargePlanIds: (chart.smartChargePlans || []).map((p) => p._id),
+      gridConsumptionParameterId: chart.gridConsumptionParameter?._id || '',
       autoType: chart.autoInclude?.type || '',
       autoUnit: chart.autoInclude?.unit || '',
       excludedIds: (chart.excludedParameters || []).map((id) => String(id._id || id)),
@@ -273,12 +299,14 @@ export default function AdminCharts() {
       ...rangeFields(form.range),
       showOnDashboard: form.showOnDashboard,
       costTrackers: isCost ? form.costTrackerIds : [],
+      smartChargePlans: isSmartChargeSavings ? form.smartChargePlanIds : [],
+      gridConsumptionParameter: isSmartChargeSavings ? form.gridConsumptionParameterId || null : null,
       autoInclude: supportsAutoInclude && form.autoType ? { type: form.autoType, unit: form.autoUnit } : { type: null, unit: '' },
       excludedParameters:
         supportsAutoInclude && form.autoType
           ? form.excludedIds.filter((id) => autoMatches.some((p) => p._id === id))
           : [],
-      ...(isCost
+      ...(isCost || isSmartChargeSavings
         ? { parameters: [], flowRoles: {}, devices: [], circular: false }
         : isEnergyFlow
         ? {
@@ -435,6 +463,13 @@ export default function AdminCharts() {
                   opgeslagen historiek.
                 </p>
               )}
+              {isSmartChargeSavings && (
+                <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                  Toont hoeveel van het net geladen is voor de gekozen slim-laadplannen, optioneel
+                  naast het totale netverbruik van de woning, en wat dat laden effectief heeft
+                  bespaard tegenover de referentieprijs van elk plan (zie Slim laden).
+                </p>
+              )}
             </div>
 
             {isEnergyFlow ? (
@@ -555,6 +590,63 @@ export default function AdminCharts() {
                   )}
                   <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
                     Niets aangevinkt = alle kostenberekeningen van de woning, ook die later bijkomen.
+                  </p>
+                </div>
+              </>
+            ) : isSmartChargeSavings ? (
+              <>
+                <div className="form-field">
+                  <label>Periode</label>
+                  <select value={form.range} onChange={(e) => setForm({ ...form, range: e.target.value })}>
+                    {RANGE_OPTIONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Slim-laadplannen</label>
+                  {smartChargePlans.map((p) => (
+                    <label key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.smartChargePlanIds.includes(p._id)}
+                        onChange={() =>
+                          setForm((f) => ({
+                            ...f,
+                            smartChargePlanIds: f.smartChargePlanIds.includes(p._id)
+                              ? f.smartChargePlanIds.filter((x) => x !== p._id)
+                              : [...f.smartChargePlanIds, p._id],
+                          }))
+                        }
+                      />
+                      {p.name}
+                    </label>
+                  ))}
+                  {smartChargePlans.length === 0 && (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Deze woning heeft nog geen slim-laadplan. Maak er eerst een aan onder Slim
+                      laden.
+                    </p>
+                  )}
+                  <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                    Niets aangevinkt = alle slim-laadplannen van de woning, ook die later bijkomen.
+                  </p>
+                </div>
+                <div className="form-field">
+                  <label>Totaal netverbruik (optioneel)</label>
+                  <select
+                    value={form.gridConsumptionParameterId}
+                    onChange={(e) => setForm({ ...form, gridConsumptionParameterId: e.target.value })}
+                  >
+                    <option value="">— geen totaallijn —</option>
+                    <ParameterOptions parameters={gridConsumptionCandidates} />
+                  </select>
+                  <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                    Een cumulatieve teller (kWh) voor wat de woning in totaal van het net afneemt —
+                    bv. “van net afgehaald vandaag”. Zonder deze keuze toont de grafiek enkel het
+                    net-laden van de batterij, niet de vergelijking met het totale huisverbruik.
                   </p>
                 </div>
               </>

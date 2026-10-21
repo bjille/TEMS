@@ -9,6 +9,7 @@ import EnergyFlowChart from '../../components/EnergyFlowChart';
 import PieTotalsChart from '../../components/PieTotalsChart';
 import PriceForecastChart from '../../components/PriceForecastChart';
 import CostChart from '../../components/CostChart';
+import SmartChargeSavingsChart from '../../components/SmartChargeSavingsChart';
 import BadgeBar from '../../components/BadgeBar';
 import { RANGE_OPTIONS, rangeFields, rangeValue } from '../../components/chartRange';
 
@@ -68,6 +69,8 @@ export default function ChartDetailPage() {
         .join(' · ')
     : chart.type === 'cost'
     ? (chart.costTrackers || []).map((t) => t.name).join(' · ')
+    : chart.type === 'smart_charge_savings'
+    ? (chart.smartChargePlans || []).map((p) => p.name).join(' · ')
     : chart.parameters.map((p) => p.label).join(' · ');
 
   return (
@@ -110,6 +113,8 @@ export default function ChartDetailPage() {
           <PriceForecastChart chart={chart} woningId={woningId} height={480} />
         ) : chart.type === 'cost' ? (
           <CostChart chart={displayChart} woningId={woningId} height={480} />
+        ) : chart.type === 'smart_charge_savings' ? (
+          <SmartChargeSavingsChart chart={displayChart} woningId={woningId} height={480} />
         ) : (
           <ApexSeriesChart chart={displayChart} woningId={woningId} height={480} />
         )}

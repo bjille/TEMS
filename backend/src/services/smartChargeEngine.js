@@ -4,7 +4,18 @@ const Parameter = require('../models/Parameter');
 const Woning = require('../models/Woning');
 const Reading = require('../models/Reading');
 const CommandLog = require('../models/CommandLog');
-const { fetchPriceForecast } = require('./priceForecastService');
+const SmartChargeHistory = require('../models/SmartChargeHistory');
+const { fetchPriceForecast, normalizePricePoints } = require('./priceForecastService');
+const { HaClient } = require('./haClient');
+const { decrypt } = require('../utils/crypto');
+
+const HOUR_MS = 3600 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+// HA's recorder purges raw state history (the only place that retains an
+// entity's attributes, as opposed to its long-term statistics, which track
+// only the bare numeric state) after about this long — see
+// historicalDayPriceCurve below for why that matters here.
+const HISTORY_RETENTION_MS = 10 * DAY_MS;
 
 // Re-evaluate (and, for enabled plans, act on) every 10 minutes: frequent
 // enough that charging starts within a few minutes of the hour it was
@@ -436,42 +447,61 @@ async function resolveHourlyConsumptionShares(consumptionParameter) {
   return parameter ? hourlyConsumptionProfile(parameter) : null;
 }
 
-// Reconstructs today's actual grid-charging ON/OFF intervals from the
-// plan's CommandLog history, rather than from the (forward-looking, and
-// never persisted hour-by-hour) chargeHours the engine computes at each
-// tick. A contiguous ON period starts at the latest successful command that
-// turned charging on — including one issued before today, if it was still
-// on at midnight — and ends at the next successful command that turns it
-// off, or at `now` if it's still charging. Only successful commands count:
-// a failed HA call never actually changed the switch's real state.
-async function todaysChargeIntervals(plan, dayStart, now) {
+// No real smart-charge session should ever need to run this long —
+// capacityKwh / maxChargePowerKw bounds it to a handful of hours for any
+// sane plan configuration. Caps a reconstructed ON interval (see
+// chargeIntervalsInRange below) at this length, because evaluateAndAct
+// never turns a disabled plan's switch off: if a plan got toggled off (or
+// the engine couldn't reach HA) while mid-charge, the last logged "on"
+// command is simply never followed by an "off" until the plan is re-
+// enabled and conditions change — sometimes days or weeks later — which
+// would otherwise read as one continuous multi-day charging session.
+const MAX_CONTINUOUS_CHARGE_HOURS = 6;
+
+// Reconstructs a plan's actual grid-charging ON/OFF intervals within
+// [rangeStart, rangeEnd) from its CommandLog history, rather than from the
+// (forward-looking, and never persisted hour-by-hour) chargeHours the
+// engine computes at each tick. A contiguous ON period starts at the latest
+// successful command that turned charging on — including one issued before
+// rangeStart, if it was still on at that point — and ends at the next
+// successful command that turns it off, or at `rangeEnd` if it's still
+// charging there (each capped at MAX_CONTINUOUS_CHARGE_HOURS — see above).
+// Only successful commands count: a failed HA call never actually changed
+// the switch's real state. Used both for "today so far" (see
+// computeTodaysSavings) and for backfilling arbitrary past days (see
+// backfillPlanHistory below).
+async function chargeIntervalsInRange(plan, rangeStart, rangeEnd) {
   const isOn = (log) =>
     log.action === 'select_option' ? log.payload?.option === plan.chargeOnOption : log.action === 'turn_on';
+  const capped = (start, end) => ({
+    start,
+    end: new Date(Math.min(end.getTime(), start.getTime() + MAX_CONTINUOUS_CHARGE_HOURS * HOUR_MS)),
+  });
 
-  const [before, today] = await Promise.all([
-    CommandLog.findOne({ smartChargePlan: plan._id, result: 'success', createdAt: { $lt: dayStart } })
+  const [before, within] = await Promise.all([
+    CommandLog.findOne({ smartChargePlan: plan._id, result: 'success', createdAt: { $lt: rangeStart } })
       .sort({ createdAt: -1 })
       .lean(),
     CommandLog.find({
       smartChargePlan: plan._id,
       result: 'success',
-      createdAt: { $gte: dayStart, $lte: now },
+      createdAt: { $gte: rangeStart, $lte: rangeEnd },
     })
       .sort({ createdAt: 1 })
       .lean(),
   ]);
 
   const intervals = [];
-  let onSince = before && isOn(before) ? dayStart : null;
-  for (const log of today) {
+  let onSince = before && isOn(before) ? rangeStart : null;
+  for (const log of within) {
     const on = isOn(log);
     if (on && onSince === null) onSince = log.createdAt;
     else if (!on && onSince !== null) {
-      intervals.push({ start: onSince, end: log.createdAt });
+      intervals.push(capped(onSince, log.createdAt));
       onSince = null;
     }
   }
-  if (onSince !== null) intervals.push({ start: onSince, end: now });
+  if (onSince !== null) intervals.push(capped(onSince, rangeEnd));
   return intervals;
 }
 
@@ -510,7 +540,7 @@ async function computeTodaysSavings(plan, forecastPoints, hourlyConsumptionShare
   });
   if (todaysPoints.length === 0) return null;
 
-  const intervals = await todaysChargeIntervals(plan, dayStart, now);
+  const intervals = await chargeIntervalsInRange(plan, dayStart, now);
 
   let totalKwh = 0;
   let actualCostEUR = 0;
@@ -543,6 +573,207 @@ async function computeTodaysSavings(plan, forecastPoints, hourlyConsumptionShare
     savingsEUR: hypotheticalCostEUR === null ? null : hypotheticalCostEUR - actualCostEUR,
   };
 }
+
+// A dynamic-prices entity's hourly curve lives entirely in its ATTRIBUTES
+// (`prices_today`/`prices_tomorrow` — see priceForecastService.js), not its
+// bare numeric state, and HA's long-term statistics only ever track the
+// state — so unlike a plain cumulative meter (see costEngine.js), that
+// state's recorded history is simply the wrong signal to reconstruct a past
+// day's hourly prices from (it may not even change hour to hour). The only
+// place that still carries the attributes HA had at a given moment is its
+// raw state history, which the recorder purges after HISTORY_RETENTION_MS —
+// so a day within that window can still be read back exactly; anything
+// older than that genuinely can't be recovered at all. Any snapshot taken
+// during `dayStart`'s calendar day carries that whole day's real curve as
+// an attribute, so only one is needed — the latest, in case of a late
+// correction.
+async function historicalDayPriceCurve(client, priceParameter, dayStart) {
+  const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+  let states;
+  try {
+    states = await client.fetchHistory(priceParameter.entityId, {
+      start: dayStart.toISOString(),
+      end: dayEnd.toISOString(),
+      minimalResponse: false,
+    });
+  } catch (err) {
+    console.error(`Price history fetch failed for ${priceParameter.entityId}:`, err.message);
+    return [];
+  }
+  for (let i = states.length - 1; i >= 0; i--) {
+    const points = normalizePricePoints(states[i].attributes).filter((p) => {
+      const t = new Date(p.timestamp).getTime();
+      return t >= dayStart.getTime() && t < dayEnd.getTime();
+    });
+    if (points.length > 0) return points;
+  }
+  return [];
+}
+
+// Backfills a plan's SmartChargeHistory rows for every complete hour in
+// [rangeStartMs, rangeEndMs) — the money-saving counterpart of
+// computeTodaysSavings, but persisted so a chart can show it as a trend
+// instead of only "today". avoidedPrice is computed per calendar day, scoped
+// to that day's other hours — the same scope evaluatePlan uses for "today"
+// — so a backfill covering several weeks gets one avoidedPrice per day, not
+// one for the whole window. Today's own prices always come live (via
+// fetchPriceForecast, the same source evaluatePlan itself uses) rather than
+// from history, since it's both the freshest source and the only one that
+// works before HA even has a recorded history for today to read back; any
+// earlier day is read from HA's raw history while that's still within
+// HISTORY_RETENTION_MS, and simply skipped (no rows written) once it isn't
+// — there is no way to recover it at that point.
+async function backfillPlanHistory(plan, rangeStartMs, rangeEndMs) {
+  if (rangeStartMs >= rangeEndMs) return;
+  const priceParameter = plan.priceParameter._id
+    ? plan.priceParameter
+    : await Parameter.findById(plan.priceParameter);
+  if (!priceParameter) return;
+  const woning = await Woning.findById(plan.woning).select('+haTokenEncrypted');
+  if (!woning) return;
+  const client = new HaClient({ baseUrl: woning.haBaseUrl, token: decrypt(woning.haTokenEncrypted) });
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayStartMs = todayStart.getTime();
+  const earliestRecoverableMs = floorToHourMs(Date.now()) - HISTORY_RETENTION_MS;
+
+  const intervals = await chargeIntervalsInRange(plan, new Date(rangeStartMs), new Date(rangeEndMs));
+  const hourlyConsumptionShares =
+    plan.avoidedPriceMode === 'consumption_weighted'
+      ? await resolveHourlyConsumptionShares(plan.consumptionParameter)
+      : null;
+
+  const firstDayStartMs = new Date(rangeStartMs).setHours(0, 0, 0, 0);
+  const ops = [];
+  for (let dayStartMs = firstDayStartMs; dayStartMs < rangeEndMs; dayStartMs += DAY_MS) {
+    let dayPoints;
+    if (dayStartMs === todayStartMs) {
+      const forecast = await fetchPriceForecast(priceParameter, woning).catch(() => null);
+      dayPoints = forecast ? forecast.points : [];
+    } else if (dayStartMs < todayStartMs && dayStartMs >= earliestRecoverableMs) {
+      dayPoints = await historicalDayPriceCurve(client, priceParameter, new Date(dayStartMs));
+    } else {
+      dayPoints = []; // future, or past HA's history retention — unrecoverable
+    }
+
+    // Clip to the requested range in case it starts or ends mid-day.
+    const hours = dayPoints
+      .map((p) => ({ hourMs: new Date(p.timestamp).getTime(), price: p.price }))
+      .filter((h) => h.hourMs >= rangeStartMs && h.hourMs < rangeEndMs);
+    if (hours.length === 0) continue;
+
+    const withCharge = hours.map((h) => ({
+      ...h,
+      kwh: overlapHours(intervals, h.hourMs, h.hourMs + HOUR_MS) * plan.maxChargePowerKw,
+    }));
+    const otherPoints = withCharge
+      .filter((h) => h.kwh === 0)
+      .map((h) => ({ timestamp: new Date(h.hourMs).toISOString(), price: h.price }));
+    const { price: avoidedPrice, basis: avoidedPriceBasis } = computeAvoidedPrice(
+      otherPoints,
+      plan.avoidedPriceMode,
+      hourlyConsumptionShares
+    );
+    for (const h of withCharge) {
+      ops.push({
+        updateOne: {
+          filter: { plan: plan._id, start: new Date(h.hourMs) },
+          update: {
+            $set: {
+              woning: plan.woning,
+              gridChargedKwh: h.kwh,
+              price: h.price,
+              actualCost: h.kwh * h.price,
+              avoidedPrice,
+              avoidedPriceBasis,
+              hypotheticalCost: avoidedPrice === null ? null : h.kwh * avoidedPrice,
+            },
+          },
+          upsert: true,
+        },
+      });
+    }
+  }
+  if (ops.length > 0) await SmartChargeHistory.bulkWrite(ops, { ordered: false });
+}
+
+// How far back a plan's history is (re)built from scratch the first time it
+// backfills — far enough for a month-view trend chart, without hammering HA
+// for statistics going back further than anyone's likely to look.
+const HISTORY_LOOKBACK_DAYS = 32;
+// Recomputes this much of the most recently-backfilled time on every tick
+// too, so CommandLog entries or price statistics that arrived late still
+// end up recorded against the right hour.
+const HISTORY_RECOMPUTE_OVERLAP_MS = 3 * HOUR_MS;
+// A few minutes past each quarter, same cadence as the cost engine but
+// offset from it so the two don't contend for the same tick.
+const HISTORY_TICK_CRON = '7,22,37,52 * * * *';
+
+/**
+ * Periodically backfills every SmartChargePlan's SmartChargeHistory —
+ * independent of SmartChargeEngine's own 10-minute tick, which only decides
+ * and acts on the live recommendation and never persists anything per hour.
+ * Mirrors CostEngine's shape (per-plan compute/recompute, one in-flight
+ * computation at a time per plan) since both are "catch up stored history"
+ * jobs over HA data that may arrive late.
+ */
+class SmartChargeHistoryEngine {
+  constructor() {
+    this.task = null;
+    this.running = new Map();
+  }
+
+  start() {
+    if (this.task) return;
+    this.task = cron.schedule(HISTORY_TICK_CRON, () => {
+      this.tick().catch((err) => console.error('Smart charge history tick failed:', err));
+    });
+    this.tick().catch((err) => console.error('Smart charge history initial tick failed:', err));
+  }
+
+  stop() {
+    this.task?.stop();
+    this.task = null;
+  }
+
+  // Every plan, not just enabled ones — a disabled plan's past charging
+  // (from when it was enabled) is still meaningful history to show.
+  async tick() {
+    const plans = await SmartChargePlan.find({}).populate(['priceParameter', 'consumptionParameter']);
+    for (const plan of plans) {
+      await this.backfill(plan).catch((err) =>
+        console.error(`Smart charge history backfill failed for plan ${plan._id}:`, err.message)
+      );
+    }
+  }
+
+  backfill(plan) {
+    const id = plan._id.toString();
+    if (this.running.has(id)) return this.running.get(id);
+    const promise = (async () => {
+      const latest = await SmartChargeHistory.findOne({ plan: plan._id }).sort({ start: -1 }).select('start').lean();
+      const earliestAllowedMs = floorToHourMs(Date.now()) - HISTORY_LOOKBACK_DAYS * DAY_MS;
+      const rangeStartMs = latest
+        ? Math.max(earliestAllowedMs, latest.start.getTime() - HISTORY_RECOMPUTE_OVERLAP_MS)
+        : earliestAllowedMs;
+      const rangeEndMs = floorToHourMs(Date.now());
+      await backfillPlanHistory(plan, rangeStartMs, rangeEndMs);
+    })().finally(() => this.running.delete(id));
+    this.running.set(id, promise);
+    return promise;
+  }
+
+  /** Throws away a plan's backfilled history and rebuilds it from scratch. */
+  async recompute(planId) {
+    await this.running.get(planId.toString());
+    await SmartChargeHistory.deleteMany({ plan: planId });
+    const plan = await SmartChargePlan.findById(planId).populate(['priceParameter', 'consumptionParameter']);
+    if (plan) await this.backfill(plan);
+  }
+}
+
+const smartChargeHistoryEngine = new SmartChargeHistoryEngine();
 
 // Gathers a plan's live inputs (current SOC, remaining solar forecast, price
 // curve) and runs them through computeChargePlan. Shared by the read-only
@@ -784,12 +1015,16 @@ const smartChargeEngine = new SmartChargeEngine();
 module.exports = {
   smartChargeEngine,
   SmartChargeEngine,
+  smartChargeHistoryEngine,
+  SmartChargeHistoryEngine,
   computeChargePlan,
   evaluatePlan,
   averageDailyConsumptionKwh,
   hourlyConsumptionProfile,
   computeTodaysSavings,
-  todaysChargeIntervals,
+  chargeIntervalsInRange,
+  backfillPlanHistory,
+  historicalDayPriceCurve,
   SMART_CHARGE_POPULATE_PATHS: [
     'socParameter',
     'solarRemainingParameter',

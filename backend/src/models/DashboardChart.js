@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast', 'cost'];
+const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast', 'cost', 'smart_charge_savings'];
 const RANGE_PERIODS = ['rolling', 'month', 'year'];
 
 // A user-defined chart combining one or more Parameters of a woning into a
@@ -51,6 +51,14 @@ const dashboardChartSchema = new mongoose.Schema(
     // (see models/CostTracker.js), over the last `rangeHours`. Empty means
     // all of them, including ones added later.
     costTrackers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CostTracker' }],
+    // Used for type 'smart_charge_savings': which of the woning's smart-
+    // charge plans to show (see models/SmartChargePlan.js), over the last
+    // `rangeHours`. Empty means all of them, including ones added later —
+    // same convention as `costTrackers`. `gridConsumptionParameter`
+    // (optional) is a cumulative grid-import meter (kWh), for the "totaal
+    // verbruik van het net" line next to the plans' own grid-charging share.
+    smartChargePlans: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SmartChargePlan' }],
+    gridConsumptionParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     // Automatically includes every parameter of the woning with this type
     // and unit — including ones added later — on top of the explicitly
     // chosen `parameters` (or, for 'energyflow', as top-level `devices`),
