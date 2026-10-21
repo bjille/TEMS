@@ -59,6 +59,21 @@ const smartChargePlanSchema = new mongoose.Schema(
     // battery. Left unset, the plan falls back to treating all remaining
     // solar as available for charging.
     consumptionParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
+    // What a charge hour's price is compared against to decide whether
+    // charging now actually pays off (see computeChargePlan's avoidedPrice):
+    //  - 'average': the plain average price of every other known upcoming
+    //    hour — simple, but treats a quiet night hour the same as an
+    //    expensive hour you happen to cook/shower in.
+    //  - 'consumption_weighted': that average weighted by a historical
+    //    per-hour-of-day consumption profile derived from consumptionParameter,
+    //    so hours you actually tend to consume more in count for more. Falls
+    //    back to 'average' when consumptionParameter isn't set or there's
+    //    not yet enough history to build a profile.
+    //  - 'max': the single highest known price among those other upcoming
+    //    hours — the simplest, most pessimistic reference ("is this cheaper
+    //    than the worst moment I know about?"), and the only one of the
+    //    three that needs no consumption data at all.
+    avoidedPriceMode: { type: String, enum: ['average', 'consumption_weighted', 'max'], default: 'average' },
     // A dynamic-prices parameter whose HA entity carries the hourly price
     // curve (see services/priceForecastService.js) — the same kind of
     // parameter a 'price_forecast' DashboardChart uses.

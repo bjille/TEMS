@@ -49,6 +49,18 @@ export const toggleSmartChargePlan = createAsyncThunk(
   }
 );
 
+export const recomputeSmartChargePlan = createAsyncThunk(
+  'smartCharge/recompute',
+  async ({ woningId, planId }, { rejectWithValue }) => {
+    try {
+      const { data } = await api.post(`/woningen/${woningId}/smart-charge/${planId}/recompute`);
+      return { woningId, plan: data };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.error?.message || 'Herberekenen mislukt');
+    }
+  }
+);
+
 export const deleteSmartChargePlan = createAsyncThunk(
   'smartCharge/delete',
   async ({ woningId, planId }, { rejectWithValue }) => {
@@ -78,6 +90,7 @@ const smartChargeSlice = createSlice({
       })
       .addCase(updateSmartChargePlan.fulfilled, applyPlanUpdate)
       .addCase(toggleSmartChargePlan.fulfilled, applyPlanUpdate)
+      .addCase(recomputeSmartChargePlan.fulfilled, applyPlanUpdate)
       .addCase(deleteSmartChargePlan.fulfilled, (state, action) => {
         const { woningId, planId } = action.payload;
         const list = state.byWoning[woningId];

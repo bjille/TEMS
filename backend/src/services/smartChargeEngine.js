@@ -203,6 +203,38 @@ const ROUND_TRIP_EFFICIENCY = CHARGE_EFFICIENCY * DISCHARGE_EFFICIENCY;
 
 const average = (values) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : null);
 
+// The price an avoided grid-charge hour is measured against (see
+// computeChargePlan below). 'average' treats every other upcoming hour
+// equally; 'consumption_weighted' weighs each by `hourlyConsumptionShares`
+// (a 24-slot profile from hourlyConsumptionProfile) so hours the household
+// actually tends to consume more in — which are often the pricier ones —
+// count for more; 'max' simply takes the single highest known price,
+// needing no consumption data at all. Falls back to the plain average
+// whenever 'consumption_weighted' has nothing to weight with (no profile,
+// or every candidate hour happens to carry zero share) or there are no
+// points to compare against at all — reported via the `basis` field in its
+// result, which is always the mode actually used, after any such fallback.
+function computeAvoidedPrice(points, mode, hourlyConsumptionShares) {
+  if (points.length === 0) return { price: null, basis: 'average' };
+
+  if (mode === 'max') {
+    return { price: Math.max(...points.map((p) => p.price)), basis: 'max' };
+  }
+
+  if (mode === 'consumption_weighted' && hourlyConsumptionShares) {
+    let weightedSum = 0;
+    let weightTotal = 0;
+    for (const p of points) {
+      const weight = hourlyConsumptionShares[new Date(p.timestamp).getHours()] || 0;
+      weightedSum += p.price * weight;
+      weightTotal += weight;
+    }
+    if (weightTotal > 0) return { price: weightedSum / weightTotal, basis: 'consumption_weighted' };
+  }
+
+  return { price: average(points.map((p) => p.price)), basis: 'average' };
+}
+
 function computeChargePlan({
   capacityKwh,
   targetSocPercent,
@@ -213,6 +245,8 @@ function computeChargePlan({
   avgDailyConsumptionKwh,
   pricePoints,
   targetTime,
+  avoidedPriceMode = 'average',
+  hourlyConsumptionShares,
   now = new Date(),
 }) {
   const neededKwh = Math.max(0, (capacityKwh * (targetSocPercent - currentSocPercent)) / 100);
@@ -272,15 +306,20 @@ function computeChargePlan({
   const cheapest = [...upcoming].sort((a, b) => a.price - b.price).slice(0, hoursNeeded);
 
   // The stored energy later replaces grid consumption at "normal" prices:
-  // estimated as the average of every other known upcoming hour (the whole
-  // forecast, not just up to the deadline — the battery is used afterwards
-  // too). An hour is only worth charging in when its price, grossed up for
-  // the round-trip loss, stays below that avoided price.
+  // estimated from every other known upcoming hour (the whole forecast, not
+  // just up to the deadline — the battery is used afterwards too), either
+  // as a plain average or weighted by when the household actually tends to
+  // consume — see computeAvoidedPrice. An hour is only worth charging in
+  // when its price, grossed up for the round-trip loss, stays below that
+  // avoided price.
   const cheapestTimes = new Set(cheapest.map((h) => h.timestamp));
-  const avoidedPrice = average(
-    pricePoints
-      .filter((p) => new Date(p.timestamp).getTime() >= nowHourMs && !cheapestTimes.has(p.timestamp))
-      .map((p) => p.price)
+  const otherUpcoming = pricePoints.filter(
+    (p) => new Date(p.timestamp).getTime() >= nowHourMs && !cheapestTimes.has(p.timestamp)
+  );
+  const { price: avoidedPrice, basis: avoidedPriceBasis } = computeAvoidedPrice(
+    otherUpcoming,
+    avoidedPriceMode,
+    hourlyConsumptionShares
   );
   const isProfitable = (h) => avoidedPrice === null || h.price / ROUND_TRIP_EFFICIENCY < avoidedPrice;
   const chargeHours = cheapest
@@ -303,11 +342,73 @@ function computeChargePlan({
     deadlineFeasible,
     roundTripEfficiency: ROUND_TRIP_EFFICIENCY,
     avoidedPrice,
+    avoidedPriceBasis,
     // Highest grid price at which charging still pays off.
     breakEvenPrice: avoidedPrice === null ? null : avoidedPrice * ROUND_TRIP_EFFICIENCY,
     notProfitable,
     skippedUnprofitableHours: cheapest.length - chargeHours.length,
   };
+}
+
+// Average consumption per hour-of-day (0-23, local time), as a share of the
+// lookback window's total (values sum to 1) rather than an absolute kWh —
+// used to weight avoidedPrice by when the household actually tends to
+// consume, instead of treating every hour of the price curve equally. Mirrors
+// averageDailyConsumptionKwh's two sensor-shape cases, just bucketed by
+// hour-of-day instead of summed into one daily total. Returns null when
+// there isn't enough history (or it adds up to nothing — e.g. a period with
+// no usable deltas), so callers fall back to a plain unweighted average.
+async function hourlyConsumptionProfile(parameter, days = AVG_CONSUMPTION_LOOKBACK_DAYS) {
+  const parameterId = parameter._id || parameter;
+  const isCumulativeDaily = (parameter.unit || '').trim().toLowerCase() === 'kwh';
+
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+
+  const readings = await Reading.find({ parameter: parameterId, timestamp: { $gte: start, $lt: end } })
+    .sort({ timestamp: 1 })
+    .select('value timestamp')
+    .lean();
+
+  if (readings.length < 2) return null;
+
+  const byHour = new Array(24).fill(0);
+
+  if (isCumulativeDaily) {
+    // Attribute each reading's rise since the previous one to the hour it
+    // was measured in; a fall (the midnight reset) isn't negative
+    // consumption, so it's simply skipped.
+    for (let i = 1; i < readings.length; i++) {
+      const prev = readings[i - 1].value;
+      const curr = readings[i].value;
+      if (typeof prev !== 'number' || typeof curr !== 'number') continue;
+      const delta = curr - prev;
+      if (delta > 0) byHour[new Date(readings[i].timestamp).getHours()] += delta;
+    }
+  } else {
+    // Same zero-order-hold reasoning as averageDailyConsumptionKwh, but each
+    // gap's energy is split across the hour-of-day buckets it actually
+    // spans instead of being summed into one daily total.
+    for (let i = 0; i < readings.length; i++) {
+      const value = readings[i].value;
+      if (typeof value !== 'number') continue;
+      let fromMs = new Date(readings[i].timestamp).getTime();
+      const toMs = i + 1 < readings.length ? new Date(readings[i + 1].timestamp).getTime() : end.getTime();
+      while (fromMs < toMs) {
+        const from = new Date(fromMs);
+        const hourEnd = new Date(from);
+        hourEnd.setMinutes(0, 0, 0);
+        hourEnd.setHours(hourEnd.getHours() + 1);
+        const segmentEndMs = Math.min(toMs, hourEnd.getTime());
+        byHour[from.getHours()] += (value * (segmentEndMs - fromMs)) / 3.6e9;
+        fromMs = segmentEndMs;
+      }
+    }
+  }
+
+  const total = byHour.reduce((a, b) => a + b, 0);
+  return total > 0 ? byHour.map((v) => v / total) : null;
 }
 
 // averageDailyConsumptionKwh needs the parameter's `unit` to know which of
@@ -323,17 +424,32 @@ async function resolveConsumptionAverage(consumptionParameter) {
   return parameter ? averageDailyConsumptionKwh(parameter) : null;
 }
 
+// Same resolution as resolveConsumptionAverage, but for the hourly profile
+// computeAvoidedPrice needs in 'consumption_weighted' mode. Only called for
+// plans actually using that mode, so a plan left on 'average' never pays for
+// this extra Reading scan.
+async function resolveHourlyConsumptionShares(consumptionParameter) {
+  if (!consumptionParameter) return null;
+  const parameter = consumptionParameter._id
+    ? consumptionParameter
+    : await Parameter.findById(consumptionParameter);
+  return parameter ? hourlyConsumptionProfile(parameter) : null;
+}
+
 // Gathers a plan's live inputs (current SOC, remaining solar forecast, price
 // curve) and runs them through computeChargePlan. Shared by the read-only
 // status endpoint (a user looking at the recommendation) and the engine's
 // own tick (deciding whether to act) — both need exactly the same
 // computation, just with different consumers of the result.
 async function evaluatePlan(plan) {
-  const [socValue, solarValue, woning, avgDailyConsumptionKwh] = await Promise.all([
+  const [socValue, solarValue, woning, avgDailyConsumptionKwh, hourlyConsumptionShares] = await Promise.all([
     latestValue(plan.socParameter._id || plan.socParameter),
     latestValue(plan.solarRemainingParameter._id || plan.solarRemainingParameter),
     Woning.findById(plan.woning).select('+haTokenEncrypted'),
     resolveConsumptionAverage(plan.consumptionParameter),
+    plan.avoidedPriceMode === 'consumption_weighted'
+      ? resolveHourlyConsumptionShares(plan.consumptionParameter)
+      : null,
   ]);
 
   const currentSocPercent = typeof socValue === 'number' ? socValue : null;
@@ -380,6 +496,8 @@ async function evaluatePlan(plan) {
     avgDailyConsumptionKwh,
     pricePoints: forecast.points,
     targetTime: plan.targetTime,
+    avoidedPriceMode: plan.avoidedPriceMode,
+    hourlyConsumptionShares,
   });
 
   const nowHourMs = floorToHourMs(new Date());
@@ -559,6 +677,7 @@ module.exports = {
   computeChargePlan,
   evaluatePlan,
   averageDailyConsumptionKwh,
+  hourlyConsumptionProfile,
   SMART_CHARGE_POPULATE_PATHS: [
     'socParameter',
     'solarRemainingParameter',

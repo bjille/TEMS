@@ -46,6 +46,7 @@ const planFieldValidators = [
   body('socParameter').isMongoId(),
   body('solarRemainingParameter').isMongoId(),
   body('consumptionParameter').optional({ checkFalsy: true }).isMongoId(),
+  body('avoidedPriceMode').optional().isIn(['average', 'consumption_weighted', 'max']),
   body('targetTime').optional({ checkFalsy: true }).matches(/^([01]\d|2[0-3]):([0-5]\d)$/),
   body('priceParameter').isMongoId(),
   body('chargeSwitchParameter').isMongoId(),
@@ -138,6 +139,15 @@ router.post('/', authorizeWoning(['owner']), planFieldValidators, async (req, re
       socParameter: req.body.socParameter,
       solarRemainingParameter: req.body.solarRemainingParameter,
       consumptionParameter: req.body.consumptionParameter || undefined,
+      // 'consumption_weighted' has nothing to weight with (and nothing to
+      // net off the solar forecast) without a consumption parameter — kept
+      // on 'average' rather than saving a mode the engine would silently
+      // fall back on anyway. 'average' and 'max' don't depend on it, so
+      // they're never affected by this.
+      avoidedPriceMode:
+        req.body.avoidedPriceMode === 'consumption_weighted' && !req.body.consumptionParameter
+          ? undefined
+          : req.body.avoidedPriceMode || undefined,
       targetTime: req.body.targetTime || undefined,
       priceParameter: req.body.priceParameter,
       chargeSwitchParameter: req.body.chargeSwitchParameter,
@@ -188,6 +198,19 @@ router.patch(
       // rather than being cast to an ObjectId, which would throw.
       if ('consumptionParameter' in updates && !updates.consumptionParameter) {
         updates.consumptionParameter = null;
+        // Only 'consumption_weighted' has nothing left to weight with —
+        // 'average' and 'max' don't depend on a consumption parameter, so
+        // they're left alone. Falls back to the plan's current mode when
+        // this request doesn't also change it.
+        const currentMode =
+          'avoidedPriceMode' in updates
+            ? updates.avoidedPriceMode
+            : (
+                await SmartChargePlan.findOne({ _id: req.params.planId, woning: req.params.woningId })
+                  .select('avoidedPriceMode')
+                  .lean()
+              )?.avoidedPriceMode;
+        if (currentMode === 'consumption_weighted') updates.avoidedPriceMode = 'average';
       }
       // Same for the (optional) deadline: an empty string should clear it,
       // not fail the "HH:MM" pattern match.
@@ -267,6 +290,26 @@ router.patch(
     }
   }
 );
+
+// Forces an immediate re-evaluation (and, if enabled, re-actuation) of a
+// plan right now, without changing any of its fields — e.g. right after the
+// price forecast or SOC changed in HA, rather than waiting for the engine's
+// next 10-minute tick or the dashboard's next poll. Mirrors what create/
+// update/toggle already trigger as a side effect of their own change.
+router.post('/:planId/recompute', authorizeWoning(['owner']), async (req, res, next) => {
+  try {
+    const plan = await SmartChargePlan.findOne({
+      _id: req.params.planId,
+      woning: req.params.woningId,
+    }).populate(POPULATE_PATHS);
+    if (!plan) throw new ApiError(404, 'Smart charge plan not found');
+
+    const status = await smartChargeEngine.evaluateAndAct(plan);
+    res.json({ ...plan.toObject(), status });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.delete('/:planId', authorizeWoning(['owner']), async (req, res, next) => {
   try {

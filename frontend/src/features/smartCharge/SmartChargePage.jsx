@@ -5,6 +5,7 @@ import {
   createSmartChargePlan,
   updateSmartChargePlan,
   toggleSmartChargePlan,
+  recomputeSmartChargePlan,
   deleteSmartChargePlan,
   selectSmartChargePlansForWoning,
 } from './smartChargeSlice';
@@ -26,6 +27,7 @@ const emptyForm = {
   socParameter: '',
   solarRemainingParameter: '',
   consumptionParameter: '',
+  avoidedPriceMode: 'average',
   targetTime: '',
   priceParameter: '',
   chargeSwitchParameter: '',
@@ -124,8 +126,13 @@ function PlanStatus({ status }) {
             ? `${status.skippedUnprofitableHours} van de goedkoopste uren overgeslagen omdat ze niet voordelig zijn. `
             : ''}
           Met {Math.round((1 - status.roundTripEfficiency) * 100)}% omzettingsverlies (laden + ontladen) loont
-          laden enkel onder {status.breakEvenPrice.toFixed(3)} {status.priceUnit} (gemiddelde prijs van de andere
-          uren: {status.avoidedPrice.toFixed(3)} {status.priceUnit}).
+          laden enkel onder {status.breakEvenPrice.toFixed(3)} {status.priceUnit} (
+          {status.avoidedPriceBasis === 'consumption_weighted'
+            ? 'verbruiksgewogen'
+            : status.avoidedPriceBasis === 'max'
+            ? 'hoogste'
+            : 'gemiddelde'}{' '}
+          prijs van de andere uren: {status.avoidedPrice.toFixed(3)} {status.priceUnit}).
         </p>
       )}
       {status.deadlineAt && (
@@ -209,6 +216,7 @@ export default function SmartChargePage() {
       socParameter: plan.socParameter?._id || '',
       solarRemainingParameter: plan.solarRemainingParameter?._id || '',
       consumptionParameter: plan.consumptionParameter?._id || '',
+      avoidedPriceMode: plan.avoidedPriceMode || 'average',
       targetTime: plan.targetTime || '',
       priceParameter: plan.priceParameter?._id || '',
       chargeSwitchParameter: plan.chargeSwitchParameter?._id || '',
@@ -238,6 +246,10 @@ export default function SmartChargePage() {
       socParameter: form.socParameter,
       solarRemainingParameter: form.solarRemainingParameter,
       consumptionParameter: form.consumptionParameter || null,
+      avoidedPriceMode:
+        form.avoidedPriceMode === 'consumption_weighted' && !form.consumptionParameter
+          ? 'average'
+          : form.avoidedPriceMode,
       targetTime: form.targetTime || null,
       priceParameter: form.priceParameter,
       chargeSwitchParameter: form.chargeSwitchParameter,
@@ -263,6 +275,10 @@ export default function SmartChargePage() {
 
   async function handleToggle(plan) {
     await dispatch(toggleSmartChargePlan({ woningId, planId: plan._id, enabled: !plan.enabled }));
+  }
+
+  async function handleRecompute(plan) {
+    await dispatch(recomputeSmartChargePlan({ woningId, planId: plan._id }));
   }
 
   if (!woningId) {
@@ -313,6 +329,9 @@ export default function SmartChargePage() {
                 <>
                   <button className="btn" onClick={() => openEditForm(plan)}>
                     Wijzigen
+                  </button>
+                  <button className="btn" onClick={() => handleRecompute(plan)}>
+                    Herberekenen
                   </button>
                   <button className="btn btn-danger" onClick={() => handleDelete(plan._id)}>
                     Verwijderen
@@ -417,7 +436,17 @@ export default function SmartChargePage() {
             <label>Huisverbruik (optioneel)</label>
             <ParameterSelect
               value={form.consumptionParameter}
-              onChange={(v) => setForm({ ...form, consumptionParameter: v })}
+              onChange={(v) =>
+                setForm({
+                  ...form,
+                  consumptionParameter: v,
+                  // The consumption-weighted option disappears from the
+                  // select below without a consumption parameter — fall
+                  // back so the select never points at a removed option.
+                  avoidedPriceMode:
+                    !v && form.avoidedPriceMode === 'consumption_weighted' ? 'average' : form.avoidedPriceMode,
+                })
+              }
               parameters={consumptionParameters}
               placeholder="— geen —"
             />
@@ -427,6 +456,32 @@ export default function SmartChargePage() {
               het plan rekening met het gemiddelde dagelijkse verbruik van de voorbije 14
               dagen: dat verbruik gaat eerst van de zonneprognose af, vóór de rest naar de
               batterij gerekend wordt.
+            </p>
+          </div>
+          <div className="form-field">
+            <label>Referentieprijs om rentabiliteit te bepalen</label>
+            <select
+              value={form.avoidedPriceMode}
+              onChange={(e) => setForm({ ...form, avoidedPriceMode: e.target.value })}
+            >
+              <option value="average">Gemiddelde van alle andere uren</option>
+              {form.consumptionParameter && (
+                <option value="consumption_weighted">
+                  Automatisch berekend op basis van verbruik per uur
+                </option>
+              )}
+              <option value="max">Hoogste prijs van de dag</option>
+            </select>
+            <p className="muted" style={{ fontSize: '0.8em', margin: '4px 0 0' }}>
+              Bepaalt met welke prijs een laaduur wordt vergeleken om te zien of laden
+              voordelig is. &ldquo;Gemiddelde&rdquo; telt elk ander uur even zwaar — ook een
+              goedkoop nachtuur waarin bijna niets verbruikt wordt. &ldquo;Op basis van
+              verbruik&rdquo; weegt elk uur naar hoeveel er historisch op dat uur van de dag
+              verbruikt wordt (bv. koken of douchen), zodat die vaak duurdere piekuren ook
+              zwaarder meetellen als de prijs waarmee vergeleken wordt — valt terug op het
+              gewone gemiddelde zolang er nog niet genoeg verbruiksgeschiedenis is.
+              &ldquo;Hoogste prijs van de dag&rdquo; vergelijkt simpelweg met de duurste nog
+              gekende prijs, zonder verbruiksgeschiedenis nodig te hebben.
             </p>
           </div>
           <div className="form-field">
