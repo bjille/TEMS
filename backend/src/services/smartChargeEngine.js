@@ -625,7 +625,12 @@ async function historicalDayPriceCurve(client, priceParameter, dayStart) {
 // — there is no way to recover it at that point.
 async function backfillPlanHistory(plan, rangeStartMs, rangeEndMs) {
   if (rangeStartMs >= rangeEndMs) return;
-  const priceParameter = plan.priceParameter._id
+  // `plan.priceParameter` is `null` (not the raw id) when it was populated
+  // but the referenced Parameter has since been deleted — fall back to a
+  // fresh lookup only when there's still a raw id to look up at all.
+  const priceParameter = !plan.priceParameter
+    ? null
+    : plan.priceParameter._id
     ? plan.priceParameter
     : await Parameter.findById(plan.priceParameter);
   if (!priceParameter) return;
@@ -794,7 +799,12 @@ async function evaluatePlan(plan) {
   const currentSocPercent = typeof socValue === 'number' ? socValue : null;
   const solarRemainingKwh = typeof solarValue === 'number' ? solarValue : null;
 
-  const priceParameter = plan.priceParameter._id
+  // `plan.priceParameter` is `null` (not the raw id) when it was populated
+  // but the referenced Parameter has since been deleted — guard against
+  // that before touching `._id`, same reasoning as backfillPlanHistory.
+  const priceParameter = !plan.priceParameter
+    ? null
+    : plan.priceParameter._id
     ? plan.priceParameter
     : await Parameter.findById(plan.priceParameter);
   // Never let an HA outage throw out of here: every caller (the tick, the
@@ -817,6 +827,8 @@ async function evaluatePlan(plan) {
           ? 'Geen actuele meting voor de SOC-parameter'
           : solarRemainingKwh === null
           ? 'Geen actuele meting voor de zon-forecast-parameter'
+          : !priceParameter
+          ? 'De gekoppelde prijsparameter bestaat niet meer — kies een nieuwe onder "Wijzigen"'
           : !forecast
           ? 'Prijsdata ophalen bij Home Assistant mislukt'
           : 'Geen uurprijzen beschikbaar — de prijzensensor in Home Assistant is onbeschikbaar',
