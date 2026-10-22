@@ -41,7 +41,11 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const { from, to, kind } = chartRange({ rangeHours: chart.rangeHours, rangePeriod: chart.rangePeriod });
+      const { from, to, kind } = chartRange({
+        rangeHours: chart.rangeHours,
+        rangePeriod: chart.rangePeriod,
+        window: chart.window,
+      });
       const interval = INTERVAL_FOR_KIND[kind];
       try {
         const { data: res } = await api.get(`/woningen/${woningId}/smart-charge/history`, {
@@ -67,7 +71,7 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
       cancelled = true;
       clearInterval(timer);
     };
-  }, [woningId, chart.rangeHours, chart.rangePeriod, planIds, gridParamId, batteryParamId]);
+  }, [woningId, chart.rangeHours, chart.rangePeriod, chart.window, planIds, gridParamId, batteryParamId]);
 
   if (error) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Laden...</p>;
@@ -104,8 +108,15 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
   ];
   const colors = [CATEGORICAL.magenta, CATEGORICAL.blue, CATEGORICAL.green].slice(0, series.length);
 
-  const totalActualCost = data.plans.reduce((s, p) => s + p.totals.actualCost, 0);
-  const totalHypotheticalCost = data.plans.reduce((s, p) => s + p.totals.hypotheticalCost, 0);
+  // With a battery sensor the saving counts when grid-charged energy is
+  // used: what it cost to charge versus the grid price in the hour it
+  // replaced. Without one, the old estimate on the day of charging: the
+  // charging cost versus each plan's avoidedPrice reference.
+  const used = data.gridConsumption?.used || null;
+  const totalActualCost = used ? used.paidCost : data.plans.reduce((s, p) => s + p.totals.actualCost, 0);
+  const totalHypotheticalCost = used
+    ? used.avoidedCost
+    : data.plans.reduce((s, p) => s + p.totals.hypotheticalCost, 0);
   const savings = totalHypotheticalCost - totalActualCost;
 
   const options = {
@@ -130,13 +141,17 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
     <div>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: 8 }}>
         <span style={{ fontSize: '1.5em', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-          {formatEuro(savings)}
+          {formatEuro(Math.abs(savings))}
         </span>
         <span className="muted" style={{ fontSize: '0.85em' }}>
-          bespaard door slim te laden
+          {savings < 0 ? 'meer betaald dan zonder net-laden' : 'bespaard door slim te laden'}
         </span>
         <span className="muted" style={{ fontSize: '0.85em' }}>
-          Betaald: {formatEuro(totalActualCost)} · Zonder slim laden: {formatEuro(totalHypotheticalCost)}
+          {used
+            ? `${used.kwh.toFixed(1).replace('.', ',')} kWh netgeladen batterijstroom verbruikt · betaald bij laden: ${formatEuro(
+                totalActualCost
+              )} · van het net op dat moment: ${formatEuro(totalHypotheticalCost)}`
+            : `Betaald: ${formatEuro(totalActualCost)} · Zonder slim laden: ${formatEuro(totalHypotheticalCost)}`}
         </span>
       </div>
       <Chart options={options} series={series} type="area" height={height} />

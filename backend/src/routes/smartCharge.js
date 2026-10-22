@@ -7,7 +7,9 @@ const { authenticate } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { smartChargeEngine, evaluatePlan } = require('../services/smartChargeEngine');
-const { makeHaContext, loadSeries, counterDeltas } = require('../services/costEngine');
+const { makeHaContext, loadSeries, counterDeltas, priceScale } = require('../services/costEngine');
+const Woning = require('../models/Woning');
+const { fetchPriceForecast } = require('../services/priceForecastService');
 
 const router = express.Router({ mergeParams: true });
 
@@ -460,6 +462,37 @@ async function hourlyBatteryEnergy(powerParameter, woningId, fromMs, toMs) {
 // maxChargePowerKw), so per hour it's capped at what the battery actually
 // took in and at what was actually imported from the grid.
 //
+// The electricity price (€/kWh) per hour over [fromMs, toMs): from the
+// plans' SmartChargeHistory rows (one per complete hour, charging or not),
+// and for the hours those don't cover yet — the running hour — from the
+// first plan's live price forecast.
+async function hourlyPrices(plans, rows, woningId, fromMs, toMs) {
+  const scaleByPlan = new Map(plans.map((p) => [p._id.toString(), priceScale(p.priceParameter?.unit)]));
+  const byHour = new Map();
+  for (const row of rows) {
+    if (typeof row.price !== 'number') continue;
+    byHour.set(row.start.getTime(), row.price * (scaleByPlan.get(row.plan.toString()) ?? 1));
+  }
+  const nowHourMs = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
+  const missingRecent = [];
+  for (let t = Math.max(fromMs, nowHourMs - 3 * HOUR_MS); t < Math.min(toMs, nowHourMs + HOUR_MS); t += HOUR_MS) {
+    if (!byHour.has(t)) missingRecent.push(t);
+  }
+  const priceParameter = plans.find((p) => p.priceParameter?.entityId)?.priceParameter;
+  if (missingRecent.length > 0 && priceParameter) {
+    try {
+      const woning = await Woning.findById(woningId).select('+haTokenEncrypted');
+      const forecast = await fetchPriceForecast(priceParameter, woning);
+      const scale = priceScale(forecast.unit || priceParameter.unit);
+      const points = new Map(forecast.points.map((p) => [new Date(p.timestamp).getTime(), p.price * scale]));
+      for (const t of missingRecent) if (points.has(t)) byHour.set(t, points.get(t));
+    } catch (err) {
+      console.error('Price forecast fetch for savings failed:', err.message);
+    }
+  }
+  return byHour;
+}
+
 // Grid-charged energy isn't gone once it's in the battery: it's used again
 // later, when the battery discharges. Without grid charging those later
 // hours would have come from the grid instead, so the counterfactual takes
@@ -469,12 +502,26 @@ async function hourlyBatteryEnergy(powerParameter, woningId, fromMs, toMs) {
 // discharged that hour). Grid-charged energy not discharged within
 // GRID_CHARGE_POOL_MAX_AGE_MS is no longer attributed. Inputs are
 // Map<hourMs, kWh> (batteryByHour signed, see hourlyBatteryEnergy); returns
-// Map<hourMs, {withoutGridCharging, gridCharged, shifted}> for
+// Map<hourMs, {withoutGridCharging, gridCharged, shifted, paid, avoided}> for
 // every hour of [fromMs, toMs) — charging/discharge before fromMs only feed
 // the pool.
+//
+// With `priceByHour` (€/kWh) it also values that used energy: `paid` is what
+// it cost when it was charged, `avoided` what the same kWh would have cost
+// from the grid in the hour it was used — so the saving is realised when
+// the battery energy is actually used, not on the day it was charged. Only
+// energy with a known price at both ends is valued.
 const GRID_CHARGE_POOL_MAX_AGE_MS = 36 * HOUR_MS;
-function withoutGridChargingByHour({ gridByHour, chargedByHour, batteryByHour, lookbackFromMs, fromMs, toMs }) {
-  const pool = []; // [{ t, kwh }] oldest first
+function withoutGridChargingByHour({
+  gridByHour,
+  chargedByHour,
+  batteryByHour,
+  priceByHour = new Map(),
+  lookbackFromMs,
+  fromMs,
+  toMs,
+}) {
+  const pool = []; // [{ t, kwh, price }] oldest first
   const result = new Map();
   for (let t = lookbackFromMs; t < toMs; t += HOUR_MS) {
     while (pool.length > 0 && t - pool[0].t > GRID_CHARGE_POOL_MAX_AGE_MS) pool.shift();
@@ -485,15 +532,24 @@ function withoutGridChargingByHour({ gridByHour, chargedByHour, batteryByHour, l
     // Discharge in an hour the plan was charging can't come from that charge.
     let toCover = planned > 0 ? 0 : Math.max(0, battery);
     let shifted = 0;
+    let paid = 0;
+    let avoided = 0;
+    const priceNow = priceByHour.get(t);
     while (toCover > 1e-9 && pool.length > 0) {
       const take = Math.min(toCover, pool[0].kwh);
       shifted += take;
+      if (typeof priceNow === 'number' && typeof pool[0].price === 'number') {
+        paid += take * pool[0].price;
+        avoided += take * priceNow;
+      }
       toCover -= take;
       pool[0].kwh -= take;
       if (pool[0].kwh <= 1e-9) pool.shift();
     }
-    if (charged > 0) pool.push({ t, kwh: charged });
-    if (t >= fromMs) result.set(t, { withoutGridCharging: grid - charged + shifted, gridCharged: charged, shifted });
+    if (charged > 0) pool.push({ t, kwh: charged, price: priceByHour.get(t) });
+    if (t >= fromMs) {
+      result.set(t, { withoutGridCharging: grid - charged + shifted, gridCharged: charged, shifted, paid, avoided });
+    }
   }
   return result;
 }
@@ -525,7 +581,9 @@ router.get(
 
       const planIds = req.query.plans ? req.query.plans.split(',').filter(Boolean) : [];
       const planFilter = { woning: req.params.woningId, ...(planIds.length > 0 ? { _id: { $in: planIds } } : {}) };
-      const plans = await SmartChargePlan.find(planFilter).select('name priceParameter').populate('priceParameter', 'unit');
+      const plans = await SmartChargePlan.find(planFilter)
+        .select('name priceParameter')
+        .populate('priceParameter', 'unit entityId');
 
       // Rows from before `from` too: charging just before the window can
       // still be discharged within it (see withoutGridChargingByHour).
@@ -570,7 +628,14 @@ router.get(
           woning: req.params.woningId,
         }).lean();
         if (meterParameter) {
-          const hourly = await hourlyGridConsumption(meterParameter, req.params.woningId, fromMs, toMs);
+          // With a battery sensor, from the start of the look-back too: the
+          // grid import caps how much of earlier charging came from the grid.
+          const hourly = await hourlyGridConsumption(
+            meterParameter,
+            req.params.woningId,
+            req.query.batteryPowerParameter ? lookbackFromMs : fromMs,
+            toMs
+          );
           const gcBuckets = bucketStarts.map((s) => ({ start: s.toISOString(), kwh: 0 }));
           if (bucketStarts.length > 0) {
             for (const [hourMs, kwh] of hourly) {
@@ -594,10 +659,12 @@ router.get(
               lookbackFromMs,
               toMs
             );
+            const priceByHour = await hourlyPrices(plans, allRows, req.params.woningId, lookbackFromMs, toMs);
             const scenario = withoutGridChargingByHour({
               gridByHour: hourly,
               chargedByHour,
               batteryByHour,
+              priceByHour,
               lookbackFromMs,
               fromMs,
               toMs,
@@ -606,18 +673,33 @@ router.get(
               b.withoutGridChargingKwh = 0;
               b.gridChargedKwh = 0;
               b.shiftedKwh = 0;
+              b.usedPaidCost = 0;
+              b.usedAvoidedCost = 0;
             }
             for (const [hourMs, v] of scenario) {
               const b = gcBuckets[bucketIndex(hourMs)];
               b.withoutGridChargingKwh += v.withoutGridCharging;
               b.gridChargedKwh += v.gridCharged;
               b.shiftedKwh += v.shifted;
+              b.usedPaidCost += v.paid;
+              b.usedAvoidedCost += v.avoided;
             }
           }
           gridConsumption = {
             unit: meterParameter.unit || 'kWh',
             buckets: gcBuckets,
             total: gcBuckets.reduce((s, b) => s + b.kwh, 0),
+            // Saving realised by using grid-charged battery energy (only
+            // with a battery sensor, see withoutGridChargingByHour).
+            ...(batteryParameter
+              ? {
+                  used: {
+                    kwh: gcBuckets.reduce((s, b) => s + b.shiftedKwh, 0),
+                    paidCost: gcBuckets.reduce((s, b) => s + b.usedPaidCost, 0),
+                    avoidedCost: gcBuckets.reduce((s, b) => s + b.usedAvoidedCost, 0),
+                  },
+                }
+              : {}),
           };
         }
       }
