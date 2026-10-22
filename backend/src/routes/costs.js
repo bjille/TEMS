@@ -80,14 +80,19 @@ router.post('/trackers', authorizeWoning(['owner']), trackerValidators, async (r
   }
 });
 
+// `keepHistory: true` swaps a sensor without recalculating what's already
+// computed: the calculation simply continues from `computedUntil` with the
+// new sensor — e.g. to replace a deleted price sensor.
 router.patch(
   '/trackers/:trackerId',
   authorizeWoning(['owner']),
-  trackerValidators.map((v) => v.optional()),
+  [...trackerValidators.map((v) => v.optional()), body('keepHistory').optional().isBoolean()],
   async (req, res, next) => {
     try {
       checkValidation(req);
       const updates = pickFields(req.body);
+      const keepHistory = req.body.keepHistory === true;
+      if (keepHistory) updates.lastError = null;
       await assertParametersBelongToWoning(updates, req.params.woningId);
       const tracker = await CostTracker.findOneAndUpdate(
         { _id: req.params.trackerId, woning: req.params.woningId },
@@ -95,7 +100,7 @@ router.patch(
         { new: true, runValidators: true }
       );
       if (!tracker) throw new ApiError(404, 'Kostenberekening niet gevonden');
-      if (RECOMPUTE_FIELDS.some((f) => f in updates)) recomputeInBackground(tracker._id);
+      if (!keepHistory && RECOMPUTE_FIELDS.some((f) => f in updates)) recomputeInBackground(tracker._id);
       res.json(await tracker.populate(POPULATE_PATHS));
     } catch (err) {
       next(err);

@@ -50,6 +50,55 @@ function ParameterOptions({ parameters }) {
   ));
 }
 
+const PRICE_TYPES = ['electricity_price', 'gas_price'];
+
+// The meter and price sensor of one cost calculation, changeable right here
+// (saved immediately). A swap keeps what's already calculated and continues
+// from there with the new sensor — the Kosten page recalculates everything.
+function TrackerSensors({ tracker, woningId, parameters, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const priceOptions = parameters.filter((p) => PRICE_TYPES.includes(p.type));
+
+  async function save(field, value) {
+    if (!value) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const { data } = await api.patch(`/woningen/${woningId}/costs/trackers/${tracker._id}`, {
+        [field]: value,
+        keepHistory: true,
+      });
+      onSaved(data);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Opslaan mislukt');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const select = (field, current, options, label) => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.85em' }}>
+      <span className="muted">
+        {label}
+        {!current && <strong className="error-text"> — ontbreekt, kies een sensor</strong>}
+      </span>
+      <select value={current?._id || ''} disabled={saving} onChange={(e) => save(field, e.target.value)}>
+        {!current && <option value="">— kies —</option>}
+        <ParameterOptions parameters={options} />
+      </select>
+    </label>
+  );
+
+  return (
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '4px 0 0 24px' }}>
+      {select('meterParameter', tracker.meterParameter, parameters, 'Meter')}
+      {select('priceParameter', tracker.priceParameter, priceOptions.length > 0 ? priceOptions : parameters, 'Prijs')}
+      {error && <span className="error-text">{error}</span>}
+    </div>
+  );
+}
+
 const emptyForm = {
   name: '',
   type: 'line',
@@ -574,21 +623,31 @@ export default function AdminCharts() {
                 <div className="form-field">
                   <label>Kostenberekeningen</label>
                   {costTrackers.map((t) => (
-                    <label key={t._id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={form.costTrackerIds.includes(t._id)}
-                        onChange={() =>
-                          setForm((f) => ({
-                            ...f,
-                            costTrackerIds: f.costTrackerIds.includes(t._id)
-                              ? f.costTrackerIds.filter((x) => x !== t._id)
-                              : [...f.costTrackerIds, t._id],
-                          }))
+                    <div key={t._id} style={{ marginBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={form.costTrackerIds.includes(t._id)}
+                          onChange={() =>
+                            setForm((f) => ({
+                              ...f,
+                              costTrackerIds: f.costTrackerIds.includes(t._id)
+                                ? f.costTrackerIds.filter((x) => x !== t._id)
+                                : [...f.costTrackerIds, t._id],
+                            }))
+                          }
+                        />
+                        {t.name}
+                      </label>
+                      <TrackerSensors
+                        tracker={t}
+                        woningId={woningId}
+                        parameters={chartableParameters}
+                        onSaved={(updated) =>
+                          setCostTrackers((list) => list.map((x) => (x._id === updated._id ? updated : x)))
                         }
                       />
-                      {t.name}
-                    </label>
+                    </div>
                   ))}
                   {costTrackers.length === 0 && (
                     <p className="muted" style={{ margin: 0 }}>
@@ -597,6 +656,8 @@ export default function AdminCharts() {
                   )}
                   <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
                     Niets aangevinkt = alle kostenberekeningen van de woning, ook die later bijkomen.
+                    Meter en prijs worden meteen opgeslagen en gelden vanaf het laatst berekende uur;
+                    wat al berekend is blijft staan (alles herberekenen kan onder Kosten).
                   </p>
                 </div>
               </>
