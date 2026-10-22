@@ -53,7 +53,7 @@ function ParameterOptions({ parameters }) {
 const emptyForm = {
   name: '',
   type: 'line',
-  range: '24', // see RANGE_OPTIONS
+  range: 'day', // see RANGE_OPTIONS
   parameterIds: [],
   flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis

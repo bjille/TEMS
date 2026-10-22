@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const CHART_TYPES = ['line', 'area', 'bar', 'pie', 'energyflow', 'price_forecast', 'cost', 'smart_charge_savings'];
-const RANGE_PERIODS = ['rolling', 'month', 'year'];
+const RANGE_PERIODS = ['rolling', 'day', 'week', 'month', 'year'];
 
 // A user-defined chart combining one or more Parameters of a woning into a
 // single, pre-configured view (e.g. "Energiestromen": PV + batterij + net).
@@ -12,8 +12,8 @@ const dashboardChartSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     type: { type: String, enum: CHART_TYPES, default: 'line' },
     rangeHours: { type: Number, default: 24, min: 1 },
-    // 'rolling': the last `rangeHours` up to now. 'month' / 'year': the
-    // current calendar month / year (an overview, per day / per month),
+    // 'rolling': the last `rangeHours` up to now. 'day' / 'week' / 'month' /
+    // 'year': the current calendar day / week (from Monday) / month / year,
     // in which case rangeHours is ignored.
     rangePeriod: { type: String, enum: RANGE_PERIODS, default: 'rolling' },
     // Used for type 'line' | 'area' | 'bar' | 'pie': the series to plot over

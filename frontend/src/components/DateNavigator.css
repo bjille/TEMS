@@ -1,0 +1,49 @@
+/* Pinned to the bottom of the viewport, like Home Assistant's energy date
+   picker. The negative margins stretch the background across
+   .layout-main's padding (same as .badge-bar-sticky at the top). */
+.date-navigator {
+  position: sticky;
+  bottom: 0;
+  z-index: 12;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 16px -24px -24px;
+  padding: 10px 24px;
+  background: var(--page-plane);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 12px rgba(11, 11, 11, 0.06);
+}
+
+.date-navigator-periods,
+.date-navigator-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.date-navigator-title {
+  min-width: 150px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-navigator-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .date-navigator {
+    margin: 12px -16px -16px;
+    padding: 8px 16px;
+    justify-content: center;
+  }
+
+  .date-navigator-title {
+    min-width: 0;
+  }
+}

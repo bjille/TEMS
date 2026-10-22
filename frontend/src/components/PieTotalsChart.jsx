@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { api } from '../services/api';
 import { CATEGORICAL } from '../palette';
-import { chartRange } from './chartRange';
+import { chartRange, compareRange, windowTitle } from './chartRange';
+import { formatChange } from './CostChart';
 
 const PALETTE = Object.values(CATEGORICAL);
 
@@ -13,6 +14,8 @@ const PALETTE = Object.values(CATEGORICAL);
 // cycles on/off isn't over- or under-counted here either.
 export default function PieTotalsChart({ chart, woningId, height = 300 }) {
   const [totals, setTotals] = useState(null);
+  const [compareTotals, setCompareTotals] = useState(null);
+  const compare = compareRange(chart);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -21,17 +24,27 @@ export default function PieTotalsChart({ chart, woningId, height = 300 }) {
       setError(null);
       try {
         const range = chartRange(chart);
-        const from = range.from.toISOString();
-        const to = new Date(Math.min(range.to, Date.now())).toISOString();
-        const results = await Promise.all(
-          chart.parameters.map((p) =>
-            api.get(`/woningen/${woningId}/readings`, {
-              params: { parameterId: p._id, from, to, interval: 'day' },
-            })
-          )
-        );
+        const compareWindow = compareRange(chart);
+        const fetchTotals = (fromDate, toDate) =>
+          Promise.all(
+            chart.parameters.map((p) =>
+              api.get(`/woningen/${woningId}/readings`, {
+                params: {
+                  parameterId: p._id,
+                  from: fromDate.toISOString(),
+                  to: new Date(Math.min(toDate, Date.now())).toISOString(),
+                  interval: 'day',
+                },
+              })
+            )
+          ).then((results) => results.map((r) => r.data.reduce((sum, point) => sum + (point.value || 0), 0)));
+        const [main, previous] = await Promise.all([
+          fetchTotals(range.from, range.to),
+          compareWindow ? fetchTotals(compareWindow.from, compareWindow.to) : null,
+        ]);
         if (cancelled) return;
-        setTotals(results.map((r) => r.data.reduce((sum, point) => sum + (point.value || 0), 0)));
+        setTotals(main);
+        setCompareTotals(previous);
       } catch (err) {
         if (!cancelled) setError(err.response?.data?.error?.message || 'Kon grafiek niet laden');
       }
@@ -55,5 +68,37 @@ export default function PieTotalsChart({ chart, woningId, height = 300 }) {
     stroke: { colors: ['var(--surface-1)'] },
   };
 
-  return <Chart options={options} series={totals} type="pie" height={height} />;
+  const sum = totals.reduce((s, t) => s + t, 0);
+  const compareSum = compareTotals ? compareTotals.reduce((s, t) => s + t, 0) : 0;
+  return (
+    <div>
+      <Chart options={options} series={totals} type="pie" height={height} />
+      {compareTotals && compare && (
+        <table className="table" style={{ marginTop: 8, fontSize: '0.9em' }}>
+          <thead>
+            <tr>
+              <th />
+              <th style={{ textAlign: 'right' }}>{windowTitle(chartRange(chart))}</th>
+              <th style={{ textAlign: 'right' }}>{windowTitle(compare)}</th>
+              <th style={{ textAlign: 'right' }}>Verschil</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...chart.parameters.map((p, i) => [p.label, totals[i], compareTotals[i]]), ['Totaal', sum, compareSum]].map(
+              ([label, value, reference]) => (
+                <tr key={label}>
+                  <td>{label}</td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{value.toFixed(2)} kWh</td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{reference.toFixed(2)} kWh</td>
+                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {reference > 0 ? formatChange(value, reference) : '—'}
+                  </td>
+                </tr>
+              )
+            )}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }

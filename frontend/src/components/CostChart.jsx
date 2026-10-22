@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { api } from '../services/api';
 import { CATEGORICAL } from '../palette';
-import { chartRange } from './chartRange';
+import { chartRange, compareRange, windowTitle } from './chartRange';
 
 // Fixed categorical order, assigned by a cost calculation's position among
 // all of the woning's calculations (oldest first), so it keeps its color
@@ -27,6 +27,12 @@ export function formatEuro(value, decimals = 2) {
 export function formatQty(value, unit) {
   if (typeof value !== 'number') return '—';
   return `${value.toLocaleString('nl-BE', { maximumFractionDigits: value >= 100 ? 0 : 2 })} ${unit}`;
+}
+
+// "+12 %" / "−8 %": how `value` compares to `reference`.
+export function formatChange(value, reference) {
+  const pct = Math.round(((value - reference) / reference) * 100);
+  return `${pct > 0 ? '+' : pct < 0 ? '−' : '±'}${Math.abs(pct)} %`;
 }
 
 export function formatBucketLabel(iso, interval) {
@@ -108,18 +114,40 @@ export default function CostChart({ chart, woningId, height = 300 }) {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const { from, to, kind } = chartRange({ rangeHours: chart.rangeHours, rangePeriod: chart.rangePeriod });
+      const rangeChart = {
+        rangeHours: chart.rangeHours,
+        rangePeriod: chart.rangePeriod,
+        window: chart.window,
+        compareWindow: chart.compareWindow,
+      };
+      const { from, to, kind } = chartRange(rangeChart);
+      const compare = compareRange(rangeChart);
       const interval = INTERVAL_FOR_KIND[kind];
+      const select = (trackers) =>
+        trackerIds.length > 0 ? trackers.filter((t) => trackerIds.includes(t._id)) : trackers;
       try {
-        const { data: res } = await api.get(`/woningen/${woningId}/costs`, {
-          params: { from: from.toISOString(), to: to.toISOString(), interval },
-        });
+        const [{ data: res }, previous] = await Promise.all([
+          api.get(`/woningen/${woningId}/costs`, {
+            params: { from: from.toISOString(), to: to.toISOString(), interval },
+          }),
+          compare
+            ? api.get(`/woningen/${woningId}/costs`, {
+                params: { from: compare.from.toISOString(), to: compare.to.toISOString(), interval },
+              })
+            : null,
+        ]);
         if (cancelled) return;
         const colored = withTrackerColors(res);
         setData({
           ...colored,
-          trackers:
-            trackerIds.length > 0 ? colored.trackers.filter((t) => trackerIds.includes(t._id)) : colored.trackers,
+          trackers: select(colored.trackers),
+          // Totals of the comparison period, per tracker id.
+          compare: previous
+            ? {
+                title: windowTitle(compare),
+                totals: Object.fromEntries(select(previous.data.trackers).map((t) => [t._id, t.totals.cost])),
+              }
+            : null,
         });
         setError(null);
       } catch (err) {
@@ -132,7 +160,7 @@ export default function CostChart({ chart, woningId, height = 300 }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [woningId, chart.rangeHours, chart.rangePeriod, trackerIds]);
+  }, [woningId, chart.rangeHours, chart.rangePeriod, chart.window, chart.compareWindow, trackerIds]);
 
   if (error) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Laden...</p>;
@@ -141,6 +169,9 @@ export default function CostChart({ chart, woningId, height = 300 }) {
   }
 
   const total = data.trackers.reduce((sum, t) => sum + t.totals.cost, 0);
+  const compareTotal = data.compare
+    ? data.trackers.reduce((sum, t) => sum + (data.compare.totals[t._id] || 0), 0)
+    : null;
   return (
     <div>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
@@ -151,8 +182,15 @@ export default function CostChart({ chart, woningId, height = 300 }) {
           data.trackers.map((t) => (
             <span key={t._id} className="muted" style={{ fontSize: '0.85em' }}>
               {t.name}: {formatEuro(t.totals.cost)}
+              {data.compare ? ` (${formatEuro(data.compare.totals[t._id] || 0)})` : ''}
             </span>
           ))}
+        {data.compare && (
+          <span className="muted" style={{ fontSize: '0.85em' }}>
+            {data.compare.title}: {formatEuro(compareTotal)}
+            {compareTotal > 0 ? ` · ${formatChange(total, compareTotal)}` : ''}
+          </span>
+        )}
       </div>
       <CostBarChart data={data} height={height} />
     </div>

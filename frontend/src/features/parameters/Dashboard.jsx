@@ -15,6 +15,8 @@ import PieTotalsChart from '../../components/PieTotalsChart';
 import PriceForecastChart from '../../components/PriceForecastChart';
 import CostChart from '../../components/CostChart';
 import SmartChargeSavingsChart from '../../components/SmartChargeSavingsChart';
+import DateNavigator from '../../components/DateNavigator';
+import { fromDateInput, isCalendarPeriod, periodWindow, toDateInput } from '../../components/chartRange';
 import { WONING_STATUS_COLOR } from '../../palette';
 import { collectCategories, groupByCategory, categoryLabel } from './parameterCategories';
 import { fetchParameterCategories, selectParameterCategories } from './parameterCategoriesSlice';
@@ -63,10 +65,62 @@ function CategoryFilter({ parameters, value, onChange }) {
   );
 }
 
-function DashboardCharts({ woningId }) {
+// Chart types that show a live snapshot or HA's own forecast window, not a
+// period — the date bar doesn't apply to them.
+const PERIODLESS_TYPES = ['energyflow', 'price_forecast'];
+
+// The dashboard's date bar choice, kept for this browser tab so it survives
+// opening a chart full-screen and coming back.
+const DATE_STORAGE_KEY = 'tems.dashboardDate';
+
+function loadDateChoice() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(DATE_STORAGE_KEY));
+    if (saved && isCalendarPeriod(saved.period) && /^\d{4}-\d{2}-\d{2}$/.test(saved.date)) {
+      return { period: saved.period, anchor: fromDateInput(saved.date) };
+    }
+  } catch {
+    // no storage (private window, blocked) — fall back to today
+  }
+  return { period: 'day', anchor: new Date() };
+}
+
+function useDateChoice() {
+  const [choice, setChoice] = useState(loadDateChoice);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        DATE_STORAGE_KEY,
+        JSON.stringify({ period: choice.period, date: toDateInput(choice.anchor) })
+      );
+    } catch {
+      // not persisted; the choice still works for this page view
+    }
+  }, [choice]);
+  return {
+    period: choice.period,
+    anchor: choice.anchor,
+    setPeriod: (period) => setChoice((c) => ({ ...c, period })),
+    setAnchor: (anchor) => setChoice((c) => ({ ...c, anchor })),
+  };
+}
+
+// `dateChoice` (from the date bar) overrides every chart's own period with
+// that calendar period around the chosen date; without it, charts show
+// their own period.
+function DashboardCharts({ woningId, dateChoice }) {
   const navigate = useNavigate();
   const charts = useSelector(selectChartsForWoning(woningId));
-  const dashboardCharts = useMemo(() => charts.filter((c) => c.showOnDashboard), [charts]);
+  const period = dateChoice?.period;
+  const anchorKey = dateChoice ? toDateInput(dateChoice.anchor) : null;
+  // Memoized on the date (not the Date object), so charts only refetch when
+  // the choice really changes.
+  const dashboardCharts = useMemo(() => {
+    const shown = charts.filter((c) => c.showOnDashboard);
+    if (!period) return shown;
+    const window = periodWindow(period, fromDateInput(anchorKey));
+    return shown.map((c) => (PERIODLESS_TYPES.includes(c.type) ? c : { ...c, rangePeriod: period, window }));
+  }, [charts, period, anchorKey]);
 
   if (dashboardCharts.length === 0) return null;
 
@@ -81,7 +135,12 @@ function DashboardCharts({ woningId }) {
             <h3 style={{ margin: 0 }}>{chart.name}</h3>
             <button
               className="btn btn-ghost"
-              onClick={() => navigate(`/woningen/${woningId}/charts/${chart._id}`)}
+              onClick={() =>
+                navigate(
+                  `/woningen/${woningId}/charts/${chart._id}` +
+                    (period && !PERIODLESS_TYPES.includes(chart.type) ? `?period=${period}&date=${anchorKey}` : '')
+                )
+              }
             >
               Volledig scherm →
             </button>
@@ -144,6 +203,9 @@ export default function Dashboard() {
   const woningen = useSelector(selectWoningen);
   const parameters = useSelector(selectParametersForWoning(woningId));
   const [categoryFilter, setCategoryFilter] = useState('');
+  const dateChoice = useDateChoice();
+  const charts = useSelector(selectChartsForWoning(woningId));
+  const hasPeriodCharts = charts.some((c) => c.showOnDashboard && !PERIODLESS_TYPES.includes(c.type));
 
   const overviewMode = woningen.length > 0 && !woningId;
 
@@ -192,7 +254,8 @@ export default function Dashboard() {
       ) : (
         <ParameterGroups parameters={parameters} woningId={woningId} categoryFilter={categoryFilter} />
       )}
-      <DashboardCharts woningId={woningId} />
+      <DashboardCharts woningId={woningId} dateChoice={dateChoice} />
+      {hasPeriodCharts && <DateNavigator {...dateChoice} />}
     </div>
   );
 }
