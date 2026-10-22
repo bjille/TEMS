@@ -13,6 +13,7 @@ import { colorForType, CATEGORICAL } from '../../palette';
 import { categoryLabel, collectCategories, sortParameters } from '../parameters/parameterCategories';
 import { fetchParameterCategories, selectParameterCategories } from '../parameters/parameterCategoriesSlice';
 import CopyToWoningen from '../../components/CopyToWoningen';
+import { api } from '../../services/api';
 
 const TYPE_OPTIONS = [
   'battery_soc',
@@ -177,7 +178,25 @@ export default function AdminParameters() {
   }
 
   async function handleDelete(parameterId) {
-    if (!confirm('Deze parameter verwijderen?')) return;
+    // Warn about — and name — whatever still uses this parameter, since
+    // deleting it leaves those charts, automations, cost calculations or
+    // smart-charge plans with a missing sensor.
+    const label = parameters.find((p) => p._id === parameterId)?.label || 'deze parameter';
+    let usages = [];
+    try {
+      ({ data: usages } = await api.get(`/woningen/${woningId}/parameters/${parameterId}/usages`));
+    } catch {
+      usages = null;
+    }
+    const message =
+      usages === null
+        ? `Kon niet nagaan waar "${label}" nog gebruikt wordt. Toch verwijderen?`
+        : usages.length > 0
+        ? `"${label}" is nog gekoppeld aan:\n\n${usages
+            .map((u) => `• ${u.kind} "${u.name}" (${u.roles.join(', ')})`)
+            .join('\n')}\n\nDie werken niet meer correct zonder deze parameter. Toch verwijderen?`
+        : `"${label}" verwijderen?`;
+    if (!confirm(message)) return;
     await dispatch(deleteParameter({ woningId, parameterId }));
   }
 

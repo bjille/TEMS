@@ -9,6 +9,10 @@ const { ApiError } = require('../middleware/errorHandler');
 const { PARAMETER_TYPES } = require('../models/Parameter');
 const { haConnectionManager } = require('../services/haConnectionManager');
 const { fetchPriceForecast } = require('../services/priceForecastService');
+const DashboardChart = require('../models/DashboardChart');
+const Automation = require('../models/Automation');
+const CostTracker = require('../models/CostTracker');
+const SmartChargePlan = require('../models/SmartChargePlan');
 
 const router = express.Router({ mergeParams: true });
 
@@ -214,6 +218,72 @@ router.post(
     }
   }
 );
+
+// Everything in the woning that still points at a parameter, so deleting it
+// can warn about what would break: [{ kind, name, roles }], roles being how
+// it's used there (e.g. "toestel", "actie"). An auto-include rule match isn't
+// listed — such a parameter simply drops out of that chart.
+async function parameterUsages(woningId, parameterId) {
+  const id = String(parameterId);
+  const is = (ref) => ref && String(ref) === id;
+  const usages = [];
+  const add = (kind, name, roles) => roles.length > 0 && usages.push({ kind, name, roles: [...new Set(roles)] });
+
+  const [charts, automations, trackers, plans] = await Promise.all([
+    DashboardChart.find({ woning: woningId }).lean(),
+    Automation.find({ woning: woningId }).lean(),
+    CostTracker.find({ woning: woningId }).lean(),
+    SmartChargePlan.find({ woning: woningId }).lean(),
+  ]);
+
+  const FLOW_ROLE_LABELS = { pv: 'PV', battery: 'batterij', grid: 'net', thuis: 'thuis' };
+  for (const c of charts) {
+    const roles = [];
+    if ((c.parameters || []).some(is)) roles.push('reeks');
+    for (const [key, label] of Object.entries(FLOW_ROLE_LABELS)) if (is(c.flowRoles?.[key])) roles.push(`stroom ${label}`);
+    for (const d of c.devices || []) {
+      if (is(d.parameter)) roles.push('toestel');
+      if (is(d.parent)) roles.push('bovenliggend toestel');
+    }
+    if (is(c.gridConsumptionParameter)) roles.push('totaal netverbruik');
+    if (is(c.batteryPowerParameter)) roles.push('batterijvermogen');
+    if ((c.excludedParameters || []).some(is)) roles.push('uitgesloten van automatisch toevoegen');
+    add('Grafiek', c.name, roles);
+  }
+  for (const a of automations) {
+    const roles = [];
+    if ((a.conditions || []).some((cond) => is(cond.parameter))) roles.push('voorwaarde');
+    if (is(a.action?.parameter)) roles.push('actie');
+    add('Automatisatie', a.name, roles);
+  }
+  for (const t of trackers) {
+    const roles = [];
+    if (is(t.meterParameter)) roles.push('meter');
+    if (is(t.priceParameter)) roles.push('prijs');
+    add('Kostenberekening', t.name, roles);
+  }
+  const PLAN_ROLE_LABELS = {
+    socParameter: 'laadtoestand',
+    solarRemainingParameter: 'resterende zonneproductie',
+    consumptionParameter: 'verbruik',
+    priceParameter: 'prijs',
+    chargeSwitchParameter: 'laadschakelaar',
+  };
+  for (const plan of plans) {
+    add('Slim-laadplan', plan.name, Object.entries(PLAN_ROLE_LABELS).filter(([k]) => is(plan[k])).map(([, l]) => l));
+  }
+  return usages;
+}
+
+router.get('/:parameterId/usages', async (req, res, next) => {
+  try {
+    const parameter = await Parameter.findOne({ _id: req.params.parameterId, woning: req.params.woningId });
+    if (!parameter) throw new ApiError(404, 'Parameter not found');
+    res.json(await parameterUsages(req.params.woningId, parameter._id));
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.delete('/:parameterId', requireSuperadmin, async (req, res, next) => {
   try {
