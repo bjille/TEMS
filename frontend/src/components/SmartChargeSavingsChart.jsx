@@ -19,7 +19,10 @@ const round2 = (v) => Math.round(v * 100) / 100;
  * Renders a saved DashboardChart of type 'smart_charge_savings': the
  * woning's total grid import next to how much of that was the selected
  * smart-charge plan(s) charging the battery, and the derived "scenario
- * zonder net-laden" (total minus that charging share) — plus, above the
+ * zonder net-laden" — the grid import without that charging, but with the
+ * grid-charged energy back on the grid in the hours the battery discharged
+ * it again (computed by the backend, needs the chart's battery power
+ * sensor) — plus, above the
  * chart, what that charging actually cost versus what the same energy
  * would have cost at each plan's avoidedPrice reference (see
  * computeAvoidedPrice in the backend), i.e. what smart timing saved over
@@ -33,6 +36,7 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
     [chart.smartChargePlans]
   );
   const gridParamId = chart.gridConsumptionParameter?._id || chart.gridConsumptionParameter || null;
+  const batteryParamId = chart.batteryPowerParameter?._id || chart.batteryPowerParameter || null;
 
   useEffect(() => {
     let cancelled = false;
@@ -47,6 +51,7 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
             interval,
             ...(planIds.length > 0 ? { plans: planIds.join(',') } : {}),
             ...(gridParamId ? { gridConsumptionParameter: gridParamId } : {}),
+            ...(batteryParamId ? { batteryPowerParameter: batteryParamId } : {}),
           },
         });
         if (cancelled) return;
@@ -62,7 +67,7 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
       cancelled = true;
       clearInterval(timer);
     };
-  }, [woningId, chart.rangeHours, chart.rangePeriod, planIds, gridParamId]);
+  }, [woningId, chart.rangeHours, chart.rangePeriod, planIds, gridParamId, batteryParamId]);
 
   if (error) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Laden...</p>;
@@ -72,15 +77,21 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
 
   const bucketCount = data.plans[0].buckets.length;
   const labels = data.plans[0].buckets.map((b) => formatBucketLabel(b.start, data.interval));
-  const batteryKwh = Array.from({ length: bucketCount }, (_, i) =>
-    data.plans.reduce((sum, p) => sum + (p.buckets[i]?.gridChargedKwh || 0), 0)
-  );
   const totalKwh = data.gridConsumption ? data.gridConsumption.buckets.map((b) => b.kwh) : null;
-  // The counterfactual line is simply what's left of the total once the
-  // battery's own grid-charging share is taken out — it needs no separate
-  // price logic (unlike the € comparison below), since it's the same
-  // measured energy, just minus one known slice of it.
-  const withoutChargingKwh = totalKwh ? totalKwh.map((v, i) => Math.max(0, v - batteryKwh[i])) : null;
+  // The counterfactual comes from the backend: taking the charging off isn't
+  // enough, since the battery later discharges that energy — without grid
+  // charging those hours would have been drawn from the grid. Only shown
+  // when the chart has a battery power sensor to tell when that happened.
+  const measured =
+    data.gridConsumption && data.gridConsumption.buckets.some((b) => typeof b.withoutGridChargingKwh === 'number');
+  const withoutChargingKwh = measured ? data.gridConsumption.buckets.map((b) => b.withoutGridChargingKwh || 0) : null;
+  // With a battery sensor the backend also caps the plans' estimated charging
+  // (switch-on time × max power) at what the battery and grid really did.
+  const batteryKwh = measured
+    ? data.gridConsumption.buckets.map((b) => b.gridChargedKwh || 0)
+    : Array.from({ length: bucketCount }, (_, i) =>
+        data.plans.reduce((sum, p) => sum + (p.buckets[i]?.gridChargedKwh || 0), 0)
+      );
 
   const series = [
     ...(totalKwh
@@ -129,6 +140,12 @@ export default function SmartChargeSavingsChart({ chart, woningId, height = 300 
         </span>
       </div>
       <Chart options={options} series={series} type="area" height={height} />
+      {totalKwh && !withoutChargingKwh && (
+        <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+          Kies een batterijvermogen-sensor bij deze grafiek (Admin → Grafieken) om het scenario
+          zonder net-laden te tonen.
+        </p>
+      )}
     </div>
   );
 }

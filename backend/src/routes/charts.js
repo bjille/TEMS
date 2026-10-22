@@ -27,6 +27,7 @@ const POPULATE_PATHS = [
   { path: 'costTrackers', select: 'name' },
   { path: 'smartChargePlans', select: 'name' },
   { path: 'gridConsumptionParameter', select: POPULATE_FIELDS },
+  { path: 'batteryPowerParameter', select: POPULATE_FIELDS },
 ];
 
 function checkValidation(req) {
@@ -209,6 +210,7 @@ router.post(
     body('smartChargePlans').optional().isArray(),
     body('smartChargePlans.*').optional().isMongoId(),
     body('gridConsumptionParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
+    body('batteryPowerParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -225,6 +227,7 @@ router.post(
           ...collectFlowRoleIds(req.body.flowRoles),
           ...(req.body.excludedParameters || []),
           ...(req.body.gridConsumptionParameter ? [req.body.gridConsumptionParameter] : []),
+          ...(req.body.batteryPowerParameter ? [req.body.batteryPowerParameter] : []),
         ],
         req.params.woningId
       );
@@ -243,6 +246,7 @@ router.post(
         costTrackers: req.body.costTrackers || [],
         smartChargePlans: req.body.smartChargePlans || [],
         gridConsumptionParameter: req.body.gridConsumptionParameter || undefined,
+        batteryPowerParameter: req.body.batteryPowerParameter || undefined,
         autoInclude: req.body.autoInclude || { type: null, unit: '' },
         excludedParameters: req.body.excludedParameters || [],
         circular: req.body.circular || false,
@@ -286,6 +290,7 @@ router.patch(
     body('smartChargePlans').optional().isArray(),
     body('smartChargePlans.*').optional().isMongoId(),
     body('gridConsumptionParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
+    body('batteryPowerParameter').optional({ nullable: true, checkFalsy: true }).isMongoId(),
     body('circular').optional().isBoolean(),
     body('showOnDashboard').optional().isBoolean(),
   ],
@@ -323,11 +328,15 @@ router.patch(
             ...collectFlowRoleIds(req.body.flowRoles),
             ...(req.body.excludedParameters || []),
             ...(req.body.gridConsumptionParameter ? [req.body.gridConsumptionParameter] : []),
+            ...(req.body.batteryPowerParameter ? [req.body.batteryPowerParameter] : []),
           ],
           req.params.woningId
         );
-      } else if (req.body.gridConsumptionParameter) {
-        await assertParametersBelongToWoning([req.body.gridConsumptionParameter], req.params.woningId);
+      } else if (req.body.gridConsumptionParameter || req.body.batteryPowerParameter) {
+        await assertParametersBelongToWoning(
+          [req.body.gridConsumptionParameter, req.body.batteryPowerParameter].filter(Boolean),
+          req.params.woningId
+        );
       }
 
       await assertCostTrackersBelongToWoning(req.body.costTrackers, req.params.woningId);
@@ -336,8 +345,8 @@ router.patch(
       const updates = { ...req.body };
       // An empty selection clears the (optional) grid-consumption parameter
       // rather than being cast to an ObjectId, which would throw.
-      if ('gridConsumptionParameter' in updates && !updates.gridConsumptionParameter) {
-        updates.gridConsumptionParameter = null;
+      for (const key of ['gridConsumptionParameter', 'batteryPowerParameter']) {
+        if (key in updates && !updates[key]) updates[key] = null;
       }
 
       const chart = await DashboardChart.findOneAndUpdate(
@@ -394,7 +403,7 @@ router.post(
         const { map, missing } = await buildParameterRemap(sourceParamIds, targetWoningId);
         const { map: excludedMap } = await buildParameterRemap(chart.excludedParameters || [], targetWoningId);
         const { map: gridMap } = await buildParameterRemap(
-          chart.gridConsumptionParameter ? [chart.gridConsumptionParameter] : [],
+          [chart.gridConsumptionParameter, chart.batteryPowerParameter].filter(Boolean),
           targetWoningId
         );
         if (missing.length > 0) {
@@ -428,6 +437,9 @@ router.post(
           smartChargePlans: [],
           gridConsumptionParameter: chart.gridConsumptionParameter
             ? gridMap.get(chart.gridConsumptionParameter.toString())
+            : undefined,
+          batteryPowerParameter: chart.batteryPowerParameter
+            ? gridMap.get(chart.batteryPowerParameter.toString())
             : undefined,
           autoInclude: chart.autoInclude,
           // Exclusions are only a refinement of the auto-include rule, so

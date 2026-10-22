@@ -393,6 +393,111 @@ async function hourlyGridConsumption(meterParameter, woningId, fromMs, toMs) {
   return byHour;
 }
 
+// Net energy in/out of the battery per hour over [fromMs, toMs), in kWh:
+// positive = discharged, negative = charged (the hour's average power, so
+// an hour that did both only counts the balance). HA's hourly
+// `mean` statistic first; for hours without one, a time-weighted average of
+// the raw series (TEMS Readings / HA history).
+async function hourlyBatteryEnergy(powerParameter, woningId, fromMs, toMs) {
+  const haContext = makeHaContext(woningId);
+  const client = await haContext.client();
+  const toKwh = (power) => {
+    const unit = (powerParameter.unit || 'W').trim().toLowerCase();
+    return unit === 'kw' ? power : power / 1000;
+  };
+  const sign = powerParameter.invert ? -1 : 1;
+  const byHour = new Map();
+
+  if (client) {
+    try {
+      const result = await client.fetchStatistics([powerParameter.entityId], {
+        start: new Date(fromMs).toISOString(),
+        end: new Date(toMs).toISOString(),
+        types: ['mean'],
+      });
+      for (const row of result[powerParameter.entityId] || []) {
+        if (typeof row.mean !== 'number') continue;
+        const t = typeof row.start === 'number' ? row.start : new Date(row.start).getTime();
+        if (t >= fromMs && t < toMs) byHour.set(t, toKwh(row.mean * sign));
+      }
+    } catch (err) {
+      console.error(`Battery power statistics fetch failed for ${powerParameter.entityId}:`, err.message);
+    }
+  }
+
+  const missingHours = [];
+  for (let t = fromMs; t < toMs; t += HOUR_MS) if (!byHour.has(t)) missingHours.push(t);
+  if (missingHours.length > 0) {
+    // Readings are stored already inverted, so no `sign` here.
+    const series = await loadSeries(powerParameter, new Date(fromMs), new Date(toMs), haContext);
+    for (const hourMs of missingHours) {
+      const end = hourMs + HOUR_MS;
+      let area = 0;
+      let covered = 0;
+      let last = null;
+      for (const p of series) {
+        if (p.t >= end) break;
+        if (last && p.t > hourMs) {
+          const from = Math.max(last.t, hourMs);
+          area += last.v * (p.t - from);
+          covered += p.t - from;
+        }
+        last = p;
+      }
+      if (last && Math.min(Date.now(), end) > Math.max(last.t, hourMs)) {
+        const from = Math.max(last.t, hourMs);
+        const until = Math.min(Date.now(), end);
+        area += last.v * (until - from);
+        covered += until - from;
+      }
+      byHour.set(hourMs, covered > 0 ? toKwh(area / covered) * (covered / HOUR_MS) : 0);
+    }
+  }
+  return byHour;
+}
+
+// The plans' gridChargedKwh is an estimate (time the charge switch was on ×
+// maxChargePowerKw), so per hour it's capped at what the battery actually
+// took in and at what was actually imported from the grid.
+//
+// Grid-charged energy isn't gone once it's in the battery: it's used again
+// later, when the battery discharges. Without grid charging those later
+// hours would have come from the grid instead, so the counterfactual takes
+// the charging off the hour it happened in and puts the same energy back on
+// the hours the battery then discharged — oldest charge first, as long as
+// there's grid-charged energy left in the battery (and at most what was
+// discharged that hour). Grid-charged energy not discharged within
+// GRID_CHARGE_POOL_MAX_AGE_MS is no longer attributed. Inputs are
+// Map<hourMs, kWh> (batteryByHour signed, see hourlyBatteryEnergy); returns
+// Map<hourMs, {withoutGridCharging, gridCharged, shifted}> for
+// every hour of [fromMs, toMs) — charging/discharge before fromMs only feed
+// the pool.
+const GRID_CHARGE_POOL_MAX_AGE_MS = 36 * HOUR_MS;
+function withoutGridChargingByHour({ gridByHour, chargedByHour, batteryByHour, lookbackFromMs, fromMs, toMs }) {
+  const pool = []; // [{ t, kwh }] oldest first
+  const result = new Map();
+  for (let t = lookbackFromMs; t < toMs; t += HOUR_MS) {
+    while (pool.length > 0 && t - pool[0].t > GRID_CHARGE_POOL_MAX_AGE_MS) pool.shift();
+    const battery = batteryByHour.get(t) || 0;
+    const grid = gridByHour.get(t) || 0;
+    const planned = chargedByHour.get(t) || 0;
+    const charged = planned > 0 ? Math.min(planned, Math.max(0, -battery), grid) : 0;
+    // Discharge in an hour the plan was charging can't come from that charge.
+    let toCover = planned > 0 ? 0 : Math.max(0, battery);
+    let shifted = 0;
+    while (toCover > 1e-9 && pool.length > 0) {
+      const take = Math.min(toCover, pool[0].kwh);
+      shifted += take;
+      toCover -= take;
+      pool[0].kwh -= take;
+      if (pool[0].kwh <= 1e-9) pool.shift();
+    }
+    if (charged > 0) pool.push({ t, kwh: charged });
+    if (t >= fromMs) result.set(t, { withoutGridCharging: grid - charged + shifted, gridCharged: charged, shifted });
+  }
+  return result;
+}
+
 // Per-plan grid-charging history (kWh, actual cost, hypothetical cost at
 // the avoidedPrice reference) plus, optionally, the woning's total grid
 // import — bucketed into `interval`-sized buckets over [from, to). Drives
@@ -407,6 +512,7 @@ router.get(
     query('interval').optional().isIn(['hour', 'day', 'month']),
     query('plans').optional().isString(),
     query('gridConsumptionParameter').optional().isMongoId(),
+    query('batteryPowerParameter').optional().isMongoId(),
   ],
   async (req, res, next) => {
     try {
@@ -421,13 +527,17 @@ router.get(
       const planFilter = { woning: req.params.woningId, ...(planIds.length > 0 ? { _id: { $in: planIds } } : {}) };
       const plans = await SmartChargePlan.find(planFilter).select('name priceParameter').populate('priceParameter', 'unit');
 
-      const rows = await SmartChargeHistory.find({
+      // Rows from before `from` too: charging just before the window can
+      // still be discharged within it (see withoutGridChargingByHour).
+      const lookbackFromMs = fromMs - GRID_CHARGE_POOL_MAX_AGE_MS;
+      const allRows = await SmartChargeHistory.find({
         woning: req.params.woningId,
         plan: { $in: plans.map((p) => p._id) },
-        start: { $gte: from, $lt: to },
+        start: { $gte: new Date(lookbackFromMs), $lt: to },
       })
         .sort({ start: 1 })
         .lean();
+      const rows = allRows.filter((r) => r.start.getTime() >= fromMs);
 
       const bucketStarts = [];
       for (let d = new Date(from); d < to; d = nextBucket(d, interval)) bucketStarts.push(d);
@@ -466,6 +576,42 @@ router.get(
             for (const [hourMs, kwh] of hourly) {
               if (hourMs < fromMs || hourMs >= toMs) continue;
               gcBuckets[bucketIndex(hourMs)].kwh += kwh;
+            }
+          }
+
+          const batteryParameter = req.query.batteryPowerParameter
+            ? await Parameter.findOne({ _id: req.query.batteryPowerParameter, woning: req.params.woningId }).lean()
+            : null;
+          if (batteryParameter && bucketStarts.length > 0) {
+            const chargedByHour = new Map();
+            for (const row of allRows) {
+              const t = row.start.getTime();
+              chargedByHour.set(t, (chargedByHour.get(t) || 0) + (row.gridChargedKwh || 0));
+            }
+            const batteryByHour = await hourlyBatteryEnergy(
+              batteryParameter,
+              req.params.woningId,
+              lookbackFromMs,
+              toMs
+            );
+            const scenario = withoutGridChargingByHour({
+              gridByHour: hourly,
+              chargedByHour,
+              batteryByHour,
+              lookbackFromMs,
+              fromMs,
+              toMs,
+            });
+            for (const b of gcBuckets) {
+              b.withoutGridChargingKwh = 0;
+              b.gridChargedKwh = 0;
+              b.shiftedKwh = 0;
+            }
+            for (const [hourMs, v] of scenario) {
+              const b = gcBuckets[bucketIndex(hourMs)];
+              b.withoutGridChargingKwh += v.withoutGridCharging;
+              b.gridChargedKwh += v.gridCharged;
+              b.shiftedKwh += v.shifted;
             }
           }
           gridConsumption = {

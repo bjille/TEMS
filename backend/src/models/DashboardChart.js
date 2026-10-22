@@ -57,8 +57,14 @@ const dashboardChartSchema = new mongoose.Schema(
     // same convention as `costTrackers`. `gridConsumptionParameter`
     // (optional) is a cumulative grid-import meter (kWh), for the "totaal
     // verbruik van het net" line next to the plans' own grid-charging share.
+    // `batteryPowerParameter` (optional) is the battery's signed power sensor
+    // (positive = discharging, same convention as flowRoles.battery): it
+    // tells when the grid-charged energy was used again, so the "scenario
+    // zonder net-laden" can put that energy back on the grid at those hours
+    // (see routes/smartCharge.js withoutGridChargingByHour).
     smartChargePlans: [{ type: mongoose.Schema.Types.ObjectId, ref: 'SmartChargePlan' }],
     gridConsumptionParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
+    batteryPowerParameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     // Automatically includes every parameter of the woning with this type
     // and unit — including ones added later — on top of the explicitly
     // chosen `parameters` (or, for 'energyflow', as top-level `devices`),

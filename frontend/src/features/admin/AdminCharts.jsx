@@ -60,6 +60,7 @@ const emptyForm = {
   costTrackerIds: [], // empty = all of the woning's cost calculations
   smartChargePlanIds: [], // empty = all of the woning's smart-charge plans
   gridConsumptionParameterId: '', // optional: cumulative grid-import meter for the "totaal" line
+  batteryPowerParameterId: '', // optional: battery power (W, + = discharge) for the "zonder net-laden" scenario
   // Auto-include rule: every parameter of this type + unit, minus excludedIds.
   autoType: '',
   autoUnit: '',
@@ -134,6 +135,10 @@ export default function AdminCharts() {
       chartableParameters.filter(
         (p) => (p.type === 'grid_power' || p.type === 'energy_consumption') && (p.unit || '').trim().toLowerCase() === 'kwh'
       ),
+    [chartableParameters]
+  );
+  const batteryPowerCandidates = useMemo(
+    () => chartableParameters.filter((p) => p.type === 'battery_power'),
     [chartableParameters]
   );
   // Line/area/bar/pie charts and the energyflow device breakdown can pull in
@@ -275,6 +280,7 @@ export default function AdminCharts() {
       costTrackerIds: (chart.costTrackers || []).map((t) => t._id),
       smartChargePlanIds: (chart.smartChargePlans || []).map((p) => p._id),
       gridConsumptionParameterId: chart.gridConsumptionParameter?._id || '',
+      batteryPowerParameterId: chart.batteryPowerParameter?._id || '',
       autoType: chart.autoInclude?.type || '',
       autoUnit: chart.autoInclude?.unit || '',
       excludedIds: (chart.excludedParameters || []).map((id) => String(id._id || id)),
@@ -301,6 +307,7 @@ export default function AdminCharts() {
       costTrackers: isCost ? form.costTrackerIds : [],
       smartChargePlans: isSmartChargeSavings ? form.smartChargePlanIds : [],
       gridConsumptionParameter: isSmartChargeSavings ? form.gridConsumptionParameterId || null : null,
+      batteryPowerParameter: isSmartChargeSavings ? form.batteryPowerParameterId || null : null,
       autoInclude: supportsAutoInclude && form.autoType ? { type: form.autoType, unit: form.autoUnit } : { type: null, unit: '' },
       excludedParameters:
         supportsAutoInclude && form.autoType
@@ -647,6 +654,22 @@ export default function AdminCharts() {
                     Een cumulatieve teller (kWh) voor wat de woning in totaal van het net afneemt —
                     bv. “van net afgehaald vandaag”. Zonder deze keuze toont de grafiek enkel het
                     net-laden van de batterij, niet de vergelijking met het totale huisverbruik.
+                  </p>
+                </div>
+                <div className="form-field">
+                  <label>Batterijvermogen (optioneel)</label>
+                  <select
+                    value={form.batteryPowerParameterId}
+                    onChange={(e) => setForm({ ...form, batteryPowerParameterId: e.target.value })}
+                  >
+                    <option value="">— geen scenario zonder net-laden —</option>
+                    <ParameterOptions parameters={batteryPowerCandidates} />
+                  </select>
+                  <p className="muted" style={{ fontSize: '0.85em', margin: '6px 0 0' }}>
+                    Het vermogen van de batterij (W, positief = ontladen — zet anders “omkeren” aan
+                    bij de parameter). Daarmee weet TEMS wanneer de van het net geladen energie
+                    later weer verbruikt werd: zonder net-laden had je die uren van het net gehaald.
+                    Nodig voor de lijn “Scenario zonder net-laden”.
                   </p>
                 </div>
               </>
