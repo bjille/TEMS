@@ -9,12 +9,21 @@ const { decrypt } = require('../utils/crypto');
 // built against is a rolling window that includes yesterday's — already
 // irrelevant — hours instead of only what's ahead. Falls back to `prices`
 // when the split isn't present, for other integrations that only expose
-// that one attribute.
+// that one attribute — and failing that, to whatever other array attribute
+// holds price entries (e.g. Frank Energie's `all_prices`, `today_prices`
+// or `upcoming_prices`).
 function normalizePricePoints(attributes) {
   const today = Array.isArray(attributes?.prices_today) ? attributes.prices_today : [];
   const tomorrow = Array.isArray(attributes?.prices_tomorrow) ? attributes.prices_tomorrow : [];
   const combined = [...today, ...tomorrow];
-  const source = combined.length > 0 ? combined : Array.isArray(attributes?.prices) ? attributes.prices : [];
+  const looksLikePrices = (v) =>
+    Array.isArray(v) && v.length > 0 && v.some((e) => e && typeof (e.price ?? e.value) === 'number');
+  const source =
+    combined.length > 0
+      ? combined
+      : Array.isArray(attributes?.prices)
+      ? attributes.prices
+      : Object.values(attributes || {}).find(looksLikePrices) || [];
 
   const byTimestampMs = new Map();
   for (const entry of source) {
