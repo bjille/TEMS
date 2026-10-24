@@ -22,6 +22,12 @@ const parameterSchema = new mongoose.Schema(
   {
     woning: { type: mongoose.Schema.Types.ObjectId, ref: 'Woning', required: true },
     entityId: { type: String, required: true, trim: true }, // Home Assistant entity_id
+    // Optional cumulative energy counter (kWh) of the same device, like the
+    // "energy" sensor next to the "power" one in HA's energy dashboard:
+    // `entityId` then only feeds live values (TEMS keeps just the latest),
+    // while hourly/daily/monthly reporting comes from this sensor's HA
+    // long-term statistics, which HA keeps indefinitely.
+    energyEntityId: { type: String, trim: true, default: '' },
     type: { type: String, enum: PARAMETER_TYPES, required: true },
     label: { type: String, required: true, trim: true },
     unit: { type: String, trim: true },

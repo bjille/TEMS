@@ -35,6 +35,7 @@ const TYPE_OPTIONS = [
 
 const emptyForm = {
   entityId: '',
+  energyEntityId: '',
   type: 'custom',
   label: '',
   unit: '',
@@ -61,6 +62,10 @@ export default function AdminParameters() {
   const [sortBy, setSortBy] = useState('category');
   const [sortDir, setSortDir] = useState('asc');
   const managedCategories = useSelector(selectParameterCategories);
+  // null until searched; then [{ parameterId, label, entityId, candidates }]
+  const [suggestions, setSuggestions] = useState(null);
+  const [suggestionChoice, setSuggestionChoice] = useState({});
+  const [suggestionState, setSuggestionState] = useState({ loading: false, error: null });
 
   const categories = collectCategories(parameters, managedCategories);
   const filteredParameters = categoryFilter
@@ -113,6 +118,7 @@ export default function AdminParameters() {
     setEditingId(parameter._id);
     setForm({
       entityId: parameter.entityId,
+      energyEntityId: parameter.energyEntityId || '',
       type: parameter.type,
       label: parameter.label,
       unit: parameter.unit || '',
@@ -147,11 +153,12 @@ export default function AdminParameters() {
     });
     try {
       if (editingId) {
-        const { type, label, unit, icon, category, controllable, favorite, badge, invert } = form;
+        const { energyEntityId, type, label, unit, icon, category, controllable, favorite, badge, invert } = form;
         await dispatch(
           updateParameter({
             woningId,
             parameterId: editingId,
+            energyEntityId: energyEntityId.trim(),
             type,
             label,
             unit,
@@ -198,6 +205,33 @@ export default function AdminParameters() {
         : `"${label}" verwijderen?`;
     if (!confirm(message)) return;
     await dispatch(deleteParameter({ woningId, parameterId }));
+  }
+
+  // Looks up, per power parameter, the energy (kWh) sensors on the same HA
+  // device — what HA's energy dashboard pairs as a device's long-term sensor.
+  async function findEnergySensors() {
+    setSuggestionState({ loading: true, error: null });
+    try {
+      const { data } = await api.get(`/woningen/${woningId}/parameters/energy-suggestions`);
+      setSuggestions(data);
+      // Only preselected when the device has a single energy sensor: on a
+      // multi-sensor device (an inverter, a P1 meter) the right one is a choice.
+      setSuggestionChoice(
+        Object.fromEntries(data.map((s) => [s.parameterId, s.candidates.length === 1 ? s.candidates[0].entityId : '']))
+      );
+      setSuggestionState({ loading: false, error: null });
+    } catch (err) {
+      setSuggestionState({ loading: false, error: err.response?.data?.error?.message || 'Zoeken mislukt' });
+    }
+  }
+
+  async function linkEnergySensors(parameterIds) {
+    for (const parameterId of parameterIds) {
+      const energyEntityId = suggestionChoice[parameterId];
+      if (!energyEntityId) continue;
+      await dispatch(updateParameter({ woningId, parameterId, energyEntityId })).unwrap();
+      setSuggestions((list) => list.filter((s) => s.parameterId !== parameterId));
+    }
   }
 
   async function toggleControllable(parameter) {
@@ -274,6 +308,15 @@ export default function AdminParameters() {
               </div>
             </div>
           </div>
+          <EnergySuggestions
+            suggestions={suggestions}
+            choice={suggestionChoice}
+            setChoice={setSuggestionChoice}
+            state={suggestionState}
+            onSearch={findEnergySensors}
+            onLink={linkEnergySensors}
+            onClose={() => setSuggestions(null)}
+          />
           <table className="table" style={{ marginBottom: 24 }}>
             <thead>
               <tr>
@@ -307,7 +350,14 @@ export default function AdminParameters() {
                     />
                     {p.label}
                   </td>
-                  <td className="muted">{p.entityId}</td>
+                  <td className="muted">
+                    {p.entityId}
+                    {p.energyEntityId && (
+                      <div title="Lange termijn (energie)" style={{ fontSize: '0.85em' }}>
+                        ⚡ {p.energyEntityId}
+                      </div>
+                    )}
+                  </td>
                   <td>{p.type}</td>
                   <td>{categoryLabel(p.category)}</td>
                   <td>{p.unit}</td>
@@ -372,6 +422,20 @@ export default function AdminParameters() {
                 required
                 disabled={!!editingId}
               />
+            </div>
+            <div className="form-field">
+              <label>Lange termijn-sensor (energie, optioneel)</label>
+              <input
+                placeholder="sensor.koffiezet_energie"
+                value={form.energyEntityId}
+                onChange={(e) => setForm({ ...form, energyEntityId: e.target.value })}
+              />
+              <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
+                Zoals in het energiedashboard van Home Assistant: een kWh-teller van hetzelfde
+                toestel. De entity_id hierboven levert dan enkel de live waarde (TEMS bewaart
+                alleen de laatste); uur-, dag-, maand- en jaarrapportering komt uit de
+                statistieken van deze sensor.
+              </p>
             </div>
             <div className="form-field">
               <label>Type</label>
@@ -519,6 +583,106 @@ export default function AdminParameters() {
               )}
             </div>
           </form>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Proposes, per power parameter without one, the energy sensor of the same
+// HA device as its long-term sensor.
+function EnergySuggestions({ suggestions, choice, setChoice, state, onSearch, onLink, onClose }) {
+  const [linking, setLinking] = useState(false);
+  const [error, setError] = useState(null);
+  async function link(ids) {
+    setLinking(true);
+    setError(null);
+    try {
+      await onLink(ids);
+    } catch (err) {
+      setError(typeof err === 'string' ? err : 'Koppelen mislukt');
+    }
+    setLinking(false);
+  }
+
+  if (suggestions === null) {
+    return (
+      <div style={{ marginBottom: 12 }}>
+        <button className="btn" onClick={onSearch} disabled={state.loading}>
+          {state.loading ? 'Zoeken…' : '⚡ Energiesensoren zoeken voor lange termijn'}
+        </button>
+        {state.error && <p className="error-text">{state.error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="section-header" style={{ marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>Lange termijn-sensoren</h3>
+        <button className="btn btn-ghost" onClick={onClose}>
+          Sluiten
+        </button>
+      </div>
+      {suggestions.length === 0 ? (
+        <p className="muted">
+          Geen voorstellen: elke vermogensparameter met een energiesensor op hetzelfde toestel is al gekoppeld.
+        </p>
+      ) : (
+        <>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Energiesensoren (kWh) op hetzelfde Home Assistant-toestel als de vermogenssensor. Bij
+            het koppelen wordt de opgeslagen live-historiek van die parameter verwijderd, op de
+            laatste waarde na.
+          </p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Parameter</th>
+                <th>Live (vermogen)</th>
+                <th>Lange termijn (energie)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {suggestions.map((s) => (
+                <tr key={s.parameterId}>
+                  <td>{s.label}</td>
+                  <td className="muted">{s.entityId}</td>
+                  <td>
+                    <select
+                      value={choice[s.parameterId] || ''}
+                      onChange={(e) => setChoice({ ...choice, [s.parameterId]: e.target.value })}
+                    >
+                      <option value="">— niet koppelen —</option>
+                      {s.candidates.map((c) => (
+                        <option key={c.entityId} value={c.entityId}>
+                          {c.name} ({c.entityId})
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <button
+                      className="btn"
+                      disabled={linking || !choice[s.parameterId]}
+                      onClick={() => link([s.parameterId])}
+                    >
+                      Koppelen
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button
+            className="btn btn-primary"
+            disabled={linking}
+            onClick={() => link(suggestions.map((s) => s.parameterId))}
+          >
+            {linking ? 'Koppelen…' : 'Alle gekozen koppelen'}
+          </button>
+          {error && <p className="error-text">{error}</p>}
         </>
       )}
     </div>

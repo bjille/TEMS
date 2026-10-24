@@ -1,8 +1,9 @@
 const mongoose = require('mongoose');
 
 const readingSchema = new mongoose.Schema({
-  woning: { type: mongoose.Schema.Types.ObjectId, ref: 'Woning', required: true, index: true },
-  parameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true, index: true },
+  // Not indexed on their own: the compound indexes below start with them.
+  woning: { type: mongoose.Schema.Types.ObjectId, ref: 'Woning', required: true },
+  parameter: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter', required: true },
   value: { type: mongoose.Schema.Types.Mixed, required: true },
   unit: { type: String },
   timestamp: { type: Date, required: true, default: Date.now, index: true },

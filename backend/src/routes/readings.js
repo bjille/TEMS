@@ -8,6 +8,7 @@ const { ApiError } = require('../middleware/errorHandler');
 const { HaClient } = require('../services/haClient');
 const { decrypt } = require('../utils/crypto');
 const { coerceValue } = require('../services/ingestService');
+const { hourlyEnergyKwh } = require('../services/energyStatistics');
 
 const router = express.Router({ mergeParams: true });
 
@@ -187,6 +188,44 @@ async function statisticsBuckets(client, parameter, start, end, interval) {
   return buckets;
 }
 
+// The same buckets again, from a parameter's long-term energy sensor (see
+// Parameter.energyEntityId) instead of its live power sensor: kWh per hour
+// from HA's statistics. 'hour' (and a plain curve) shows it as that hour's
+// average power in W (kWh × 1000), like the power-based buckets; 'day' and
+// 'month' as kWh totals; 'day_avg' as each day's average power in W.
+async function energyBuckets(client, parameter, start, end, interval) {
+  const hourly = await hourlyEnergyKwh(client, parameter, start, end);
+  if (!hourly) return null;
+
+  if (!interval || interval === 'hour') {
+    return hourly.map((p) => ({ timestamp: new Date(p.t).toISOString(), value: Math.round(p.kwh * 10000) / 10 }));
+  }
+
+  const align = interval === 'month' ? alignToMonth : alignToDay;
+  const advance = (d) => {
+    if (interval === 'month') d.setMonth(d.getMonth() + 1);
+    else d.setDate(d.getDate() + 1);
+    return d;
+  };
+  const sums = new Map(); // bucketStartMs -> { kwh, hours }
+  for (const p of hourly) {
+    const key = align(new Date(p.t)).getTime();
+    const entry = sums.get(key) || { kwh: 0, hours: 0 };
+    entry.kwh += p.kwh;
+    entry.hours += 1;
+    sums.set(key, entry);
+  }
+  const buckets = [];
+  for (let d = align(new Date(start)); d <= end; d = advance(d)) {
+    const entry = sums.get(d.getTime());
+    let value = 0;
+    if (entry && interval === 'day_avg') value = Math.round((entry.kwh * 10000) / entry.hours) / 10;
+    else if (entry) value = Math.round(entry.kwh * 100) / 100;
+    buckets.push({ timestamp: d.toISOString(), value });
+  }
+  return buckets;
+}
+
 router.use(authenticate, authorizeWoning());
 
 // History for a single parameter, for the drill-down chart. Fetched live
@@ -228,9 +267,17 @@ router.get(
         token: decrypt(woning.haTokenEncrypted),
       });
 
+      const reachesPastHistory = Date.now() - start.getTime() > HA_HISTORY_RETENTION_MS;
+      // With a long-term energy sensor, every aggregated view (and anything
+      // reaching back past HA's raw history) comes from its statistics; only
+      // the plain recent curve still shows the live power sensor.
+      if (parameter.energyEntityId && (interval || reachesPastHistory)) {
+        const fromEnergy = await energyBuckets(client, parameter, start, end, interval).catch(() => null);
+        if (fromEnergy) return res.json(fromEnergy);
+      }
+
       // Aggregated views come from long-term statistics when the sensor has
       // them; so does anything reaching back past HA's raw history.
-      const reachesPastHistory = Date.now() - start.getTime() > HA_HISTORY_RETENTION_MS;
       if (interval === 'day' || interval === 'month' || interval === 'day_avg' || reachesPastHistory) {
         const fromStats = await statisticsBuckets(client, parameter, start, end, interval).catch(() => null);
         if (fromStats) return res.json(fromStats);

@@ -21,15 +21,38 @@ function floorToHour(date) {
   return d.getTime();
 }
 
+// The window to ask the backend for: `chart.window` (a date bar choice), and
+// when that reaches into the future, extended through tomorrow so the
+// published forecast stays visible. Null without a window: the live curve.
+function fetchWindow(window) {
+  if (!window) return null;
+  const from = new Date(window.from);
+  let to = new Date(window.to);
+  if (to.getTime() > Date.now()) {
+    const afterTomorrow = new Date();
+    afterTomorrow.setHours(0, 0, 0, 0);
+    afterTomorrow.setDate(afterTomorrow.getDate() + 2);
+    if (afterTomorrow > to) to = afterTomorrow;
+  }
+  return { from, to };
+}
+
 // Renders a saved DashboardChart of type 'price_forecast': the hourly price
-// curve read live from a dynamic-prices HA entity's `prices_today` /
-// `prices_tomorrow` attributes (see backend `price-forecast` route), not
-// from stored Readings — those attributes describe hours that haven't
-// happened yet, so there's no reading history for them.
+// curve of a dynamic-prices HA entity's `prices_today` / `prices_tomorrow`
+// attributes (see backend `price-forecast` route) — live, plus for a chosen
+// period (`chart.window`) the past days' curves TEMS stored in PriceHistory.
 export default function PriceForecastChart({ chart, woningId, height = 300 }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const parameter = chart.parameters?.[0];
+  const fromMs = chart.window ? new Date(chart.window.from).getTime() : null;
+  const toMs = chart.window ? new Date(chart.window.to).getTime() : null;
+  const range = useMemo(
+    () => (fromMs === null ? null : fetchWindow({ from: fromMs, to: toMs })),
+    [fromMs, toMs]
+  );
+  // Long windows get a line instead of hundreds of bars.
+  const isLong = range ? range.to - range.from > 3 * 24 * 3600 * 1000 : false;
 
   useEffect(() => {
     if (!parameter) return;
@@ -38,7 +61,8 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
       setError(null);
       try {
         const { data: res } = await api.get(
-          `/woningen/${woningId}/parameters/${parameter._id}/price-forecast`
+          `/woningen/${woningId}/parameters/${parameter._id}/price-forecast`,
+          range ? { params: { from: range.from.toISOString(), to: range.to.toISOString() } } : undefined
         );
         if (!cancelled) setData(res);
       } catch (err) {
@@ -51,7 +75,7 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [parameter, woningId]);
+  }, [parameter, woningId, range]);
 
   const nowHourMs = useMemo(() => floorToHour(Date.now()), [data]);
 
@@ -70,6 +94,7 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
     const barColors = (data?.points || []).map((p) =>
       new Date(p.timestamp).getTime() === nowHourMs ? ACCENT : MUTED
     );
+    const nowShown = (data?.points || []).some((p) => new Date(p.timestamp).getTime() === nowHourMs);
     return {
       chart: {
         toolbar: { show: false },
@@ -77,21 +102,23 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
         foreColor: 'var(--text-secondary)',
         background: 'transparent',
       },
-      colors: barColors,
+      colors: isLong ? [ACCENT] : barColors,
+      stroke: isLong ? { width: 2, curve: 'stepline' } : undefined,
       plotOptions: { bar: { columnWidth: '80%', distributed: true } },
       legend: { show: false },
       dataLabels: { enabled: false },
       grid: { borderColor: 'var(--gridline)' },
       xaxis: {
         type: 'datetime',
-        labels: { datetimeUTC: false, format: 'HH:mm' },
+        labels: { datetimeUTC: false, ...(range && range.to - range.from > 2 * 24 * 3600 * 1000 ? {} : { format: 'HH:mm' }) },
+        ...(range ? { min: range.from.getTime(), max: range.to.getTime() } : {}),
       },
       yaxis: {
         labels: { formatter: (v) => (typeof v === 'number' ? v.toFixed(2) : v) },
         title: { text: unit },
       },
       annotations: {
-        xaxis: [
+        xaxis: nowShown ? [
           {
             x: nowHourMs,
             borderColor: 'var(--text-secondary)',
@@ -101,18 +128,21 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
               style: { color: 'var(--text-secondary)', background: 'transparent' },
             },
           },
-        ],
+        ] : [],
       },
       tooltip: {
         x: { format: 'ddd d MMM, HH:mm' },
         y: { formatter: (v) => `${v.toFixed(3)} ${unit}` },
       },
     };
-  }, [data, nowHourMs]);
+  }, [data, nowHourMs, range, isLong]);
 
   if (!parameter) return <p className="muted">Geen parameter gekoppeld aan deze grafiek.</p>;
   if (error) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Laden...</p>;
+  if (data.points.length === 0 && range && range.to.getTime() <= Date.now()) {
+    return <p className="muted">Geen prijzen opgeslagen voor deze periode.</p>;
+  }
   if (data.points.length === 0) {
     return (
       <p className="muted">
@@ -125,5 +155,5 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
     );
   }
 
-  return <Chart options={options} series={series} type="bar" height={height} />;
+  return <Chart key={isLong ? 'line' : 'bar'} options={options} series={series} type={isLong ? 'line' : 'bar'} height={height} />;
 }

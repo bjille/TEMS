@@ -2,13 +2,17 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const Parameter = require('../models/Parameter');
 const Reading = require('../models/Reading');
+const PriceHistory = require('../models/PriceHistory');
 const Woning = require('../models/Woning');
 const { authenticate, requireSuperadmin } = require('../middleware/authenticate');
 const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { PARAMETER_TYPES } = require('../models/Parameter');
 const { haConnectionManager } = require('../services/haConnectionManager');
+const { HaClient } = require('../services/haClient');
+const { decrypt } = require('../utils/crypto');
 const { fetchPriceForecast } = require('../services/priceForecastService');
+const { loadPriceHistory, storePricePoints } = require('../services/priceHistoryService');
 const DashboardChart = require('../models/DashboardChart');
 const Automation = require('../models/Automation');
 const CostTracker = require('../models/CostTracker');
@@ -48,12 +52,71 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+async function pruneToLatestReading(parameterId) {
+  const latest = await Reading.findOne({ parameter: parameterId }).sort({ timestamp: -1 }).select('_id').lean();
+  if (latest) await Reading.deleteMany({ parameter: parameterId, _id: { $ne: latest._id } });
+}
+
+// Counters for energy flowing the other way (a plug's "returned" energy, a
+// meter's production) — never a consumer's long-term sensor.
+const NOT_CONSUMED = /export|geexporteerd|returned|teruggeleverd|produced|production|productie/i;
+const POWER_UNITS = ['w', 'kw'];
+
+// For every power parameter without a long-term energy sensor yet, the
+// cumulative kWh sensors on the same HA device — the pairing HA's own
+// energy dashboard makes between a device's "power" and "energy" sensors.
+// Best candidate first: one that never resets ("total" rather than "today").
+router.get('/energy-suggestions', requireSuperadmin, async (req, res, next) => {
+  try {
+    const woning = await Woning.findById(req.params.woningId).select('+haTokenEncrypted');
+    if (!woning) throw new ApiError(404, 'Woning not found');
+    const client = new HaClient({ baseUrl: woning.haBaseUrl, token: decrypt(woning.haTokenEncrypted) });
+    const [registry, states, parameters] = await Promise.all([
+      client.fetchEntityRegistry(),
+      client.fetchAllStates(),
+      Parameter.find({ woning: req.params.woningId }).lean(),
+    ]);
+
+    const deviceOf = new Map(registry.map((e) => [e.entity_id, e.device_id]));
+    const energyByDevice = new Map();
+    for (const s of states) {
+      const unit = String(s.attributes?.unit_of_measurement || '').toLowerCase();
+      const stateClass = s.attributes?.state_class;
+      if (!['wh', 'kwh'].includes(unit) || !['total', 'total_increasing'].includes(stateClass)) continue;
+      const name = s.attributes?.friendly_name || s.entity_id;
+      if (NOT_CONSUMED.test(s.entity_id) || NOT_CONSUMED.test(name)) continue;
+      const device = deviceOf.get(s.entity_id);
+      if (!device) continue;
+      if (!energyByDevice.has(device)) energyByDevice.set(device, []);
+      energyByDevice.get(device).push({ entityId: s.entity_id, name });
+    }
+    const resets = (c) => /today|vandaag|dag|daily|_day/i.test(c.entityId + ' ' + c.name);
+
+    const suggestions = [];
+    for (const p of parameters) {
+      if (p.energyEntityId || !POWER_UNITS.includes(String(p.unit || '').trim().toLowerCase())) continue;
+      const candidates = (energyByDevice.get(deviceOf.get(p.entityId)) || [])
+        .slice()
+        .sort((a, b) => resets(a) - resets(b));
+      if (candidates.length > 0) {
+        suggestions.push({ parameterId: p._id, label: p.label, entityId: p.entityId, candidates });
+      }
+    }
+    res.json(suggestions);
+  } catch (err) {
+    if (err.isAxiosError) return next(new ApiError(502, 'Entiteiten ophalen bij Home Assistant mislukt'));
+    next(err);
+  }
+});
+
 // Live hourly price forecast for a parameter backed by a dynamic-prices HA
 // entity (e.g. the entso-e integration's "average electricity price"
 // sensor). Fetched fresh from HA on every request rather than served from
 // stored Readings: the whole point is the sensor's forward-looking forecast
 // for hours that haven't happened yet, which by definition has no reading
-// history yet.
+// history yet. With `from`/`to` (ISO), the hourly curve over that window
+// instead: past hours from the stored PriceHistory (see
+// priceHistoryService.js), merged with the live curve where it overlaps.
 router.get('/:parameterId/price-forecast', async (req, res, next) => {
   try {
     const parameter = await Parameter.findOne({
@@ -65,8 +128,40 @@ router.get('/:parameterId/price-forecast', async (req, res, next) => {
     const woning = await Woning.findById(req.params.woningId).select('+haTokenEncrypted');
     if (!woning) throw new ApiError(404, 'Woning not found');
 
-    const forecast = await fetchPriceForecast(parameter, woning);
-    res.json(forecast);
+    const from = req.query.from ? new Date(req.query.from) : null;
+    const to = req.query.to ? new Date(req.query.to) : null;
+    if (!from || !to) {
+      const forecast = await fetchPriceForecast(parameter, woning);
+      res.json(forecast);
+      return;
+    }
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+      throw new ApiError(400, 'Ongeldige periode');
+    }
+
+    const stored = await loadPriceHistory(parameter._id, from, to);
+    const byTimestamp = new Map(stored.map((p) => [p.timestamp, p.price]));
+    let unit = stored.find((p) => p.unit)?.unit || parameter.unit || '';
+    // The live curve covers today and tomorrow; only worth fetching when the
+    // window reaches past yesterday.
+    if (to.getTime() > Date.now() - 24 * 3600 * 1000) {
+      try {
+        const forecast = await fetchPriceForecast(parameter, woning);
+        unit = forecast.unit || unit;
+        storePricePoints(parameter, forecast.points, forecast.unit).catch(() => {});
+        for (const p of forecast.points) {
+          const t = new Date(p.timestamp);
+          if (t >= from && t < to) byTimestamp.set(p.timestamp, p.price);
+        }
+      } catch (err) {
+        // Stored history is still worth showing without the live part.
+        if (stored.length === 0) throw err;
+      }
+    }
+    const points = [...byTimestamp.entries()]
+      .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+      .map(([timestamp, price]) => ({ timestamp, price }));
+    res.json({ unit, points });
   } catch (err) {
     if (err.isAxiosError) {
       return next(new ApiError(502, 'Prijsdata ophalen bij Home Assistant mislukt'));
@@ -80,6 +175,7 @@ router.post(
   requireSuperadmin,
   [
     body('entityId').isString().notEmpty(),
+    body('energyEntityId').optional().isString(),
     body('type').isIn(PARAMETER_TYPES),
     body('label').isString().notEmpty(),
     body('unit').optional().isString(),
@@ -100,6 +196,7 @@ router.post(
       const parameter = await Parameter.create({
         woning: req.params.woningId,
         entityId: req.body.entityId,
+        energyEntityId: req.body.energyEntityId || '',
         type: req.body.type,
         label: req.body.label,
         unit: req.body.unit,
@@ -128,6 +225,7 @@ router.patch(
   requireSuperadmin,
   [
     body('label').optional().isString().notEmpty(),
+    body('energyEntityId').optional().isString(),
     body('unit').optional().isString(),
     body('icon').optional().isString(),
     body('category').optional().isString(),
@@ -150,6 +248,11 @@ router.patch(
         { new: true }
       );
       if (!parameter) throw new ApiError(404, 'Parameter not found');
+      // With a long-term energy sensor the live sensor's stored history is
+      // no longer used (see ingestService): keep only its latest Reading.
+      if (parameter.energyEntityId) await pruneToLatestReading(parameter._id);
+      // The live ingest holds its own copy of each parameter.
+      await haConnectionManager.resubscribe(req.params.woningId);
       res.json(parameter);
     } catch (err) {
       next(err);
@@ -191,6 +294,7 @@ router.post(
           const copy = await Parameter.create({
             woning: targetWoningId,
             entityId: parameter.entityId,
+            energyEntityId: parameter.energyEntityId,
             type: parameter.type,
             label: parameter.label,
             unit: parameter.unit,
@@ -292,6 +396,9 @@ router.delete('/:parameterId', requireSuperadmin, async (req, res, next) => {
       woning: req.params.woningId,
     });
     if (!parameter) throw new ApiError(404, 'Parameter not found');
+    // Its history has nothing left to be shown under.
+    await Reading.deleteMany({ parameter: parameter._id });
+    await PriceHistory.deleteMany({ parameter: parameter._id });
     await haConnectionManager.resubscribe(req.params.woningId);
     res.status(204).send();
   } catch (err) {

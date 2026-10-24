@@ -5,16 +5,18 @@ const Woning = require('../models/Woning');
 const Reading = require('../models/Reading');
 const CommandLog = require('../models/CommandLog');
 const SmartChargeHistory = require('../models/SmartChargeHistory');
-const { fetchPriceForecast, normalizePricePoints } = require('./priceForecastService');
+const { fetchPriceForecast } = require('./priceForecastService');
+const { historicalDayPriceCurve, loadPriceHistory } = require('./priceHistoryService');
 const { HaClient } = require('./haClient');
+const { hourlyEnergyKwh } = require('./energyStatistics');
 const { decrypt } = require('../utils/crypto');
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 // HA's recorder purges raw state history (the only place that retains an
 // entity's attributes, as opposed to its long-term statistics, which track
-// only the bare numeric state) after about this long — see
-// historicalDayPriceCurve below for why that matters here.
+// only the bare numeric state) after about this long — older days' prices
+// come only from TEMS's own PriceHistory (see priceHistoryService.js).
 const HISTORY_RETENTION_MS = 10 * DAY_MS;
 
 // Re-evaluate (and, for enabled plans, act on) every 10 minutes: frequent
@@ -72,6 +74,20 @@ const AVG_CONSUMPTION_LOOKBACK_DAYS = 14;
 // Silently applying the power-sensor math to a cumulative kWh counter would
 // read "9.26 kWh so far today" as if it were a 9.26 W load, producing a
 // wildly wrong average.
+// kWh per hour over [start, end) from a parameter's long-term energy sensor
+// (see Parameter.energyEntityId), or null without one — TEMS then keeps no
+// history of its live sensor, so this is the only history there is.
+async function energySensorHours(parameter, start, end) {
+  if (!parameter.energyEntityId) return null;
+  const woning = await Woning.findById(parameter.woning).select('+haTokenEncrypted');
+  if (!woning) return null;
+  const client = new HaClient({ baseUrl: woning.haBaseUrl, token: decrypt(woning.haTokenEncrypted) });
+  return hourlyEnergyKwh(client, parameter, start, end).catch((err) => {
+    console.error(`Energy statistics fetch failed for ${parameter.energyEntityId}:`, err.message);
+    return null;
+  });
+}
+
 async function averageDailyConsumptionKwh(parameter, days = AVG_CONSUMPTION_LOOKBACK_DAYS) {
   const parameterId = parameter._id || parameter;
   const isCumulativeDaily = (parameter.unit || '').trim().toLowerCase() === 'kwh';
@@ -79,6 +95,17 @@ async function averageDailyConsumptionKwh(parameter, days = AVG_CONSUMPTION_LOOK
   const end = new Date();
   end.setHours(0, 0, 0, 0);
   const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+
+  const hours = await energySensorHours(parameter, start, end);
+  if (hours) {
+    const byDay = new Map();
+    for (const h of hours) {
+      const dayStart = new Date(h.t);
+      dayStart.setHours(0, 0, 0, 0);
+      byDay.set(dayStart.getTime(), (byDay.get(dayStart.getTime()) || 0) + h.kwh);
+    }
+    return byDay.size > 0 ? [...byDay.values()].reduce((a, b) => a + b, 0) / byDay.size : null;
+  }
 
   const readings = await Reading.find({ parameter: parameterId, timestamp: { $gte: start, $lt: end } })
     .sort({ timestamp: 1 })
@@ -377,6 +404,14 @@ async function hourlyConsumptionProfile(parameter, days = AVG_CONSUMPTION_LOOKBA
   end.setHours(0, 0, 0, 0);
   const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
 
+  const hours = await energySensorHours(parameter, start, end);
+  if (hours) {
+    const byHourOfDay = new Array(24).fill(0);
+    for (const h of hours) if (h.kwh > 0) byHourOfDay[new Date(h.t).getHours()] += h.kwh;
+    const sum = byHourOfDay.reduce((a, b) => a + b, 0);
+    return sum > 0 ? byHourOfDay.map((v) => v / sum) : null;
+  }
+
   const readings = await Reading.find({ parameter: parameterId, timestamp: { $gte: start, $lt: end } })
     .sort({ timestamp: 1 })
     .select('value timestamp')
@@ -574,42 +609,6 @@ async function computeTodaysSavings(plan, forecastPoints, hourlyConsumptionShare
   };
 }
 
-// A dynamic-prices entity's hourly curve lives entirely in its ATTRIBUTES
-// (`prices_today`/`prices_tomorrow` — see priceForecastService.js), not its
-// bare numeric state, and HA's long-term statistics only ever track the
-// state — so unlike a plain cumulative meter (see costEngine.js), that
-// state's recorded history is simply the wrong signal to reconstruct a past
-// day's hourly prices from (it may not even change hour to hour). The only
-// place that still carries the attributes HA had at a given moment is its
-// raw state history, which the recorder purges after HISTORY_RETENTION_MS —
-// so a day within that window can still be read back exactly; anything
-// older than that genuinely can't be recovered at all. Any snapshot taken
-// during `dayStart`'s calendar day carries that whole day's real curve as
-// an attribute, so only one is needed — the latest, in case of a late
-// correction.
-async function historicalDayPriceCurve(client, priceParameter, dayStart) {
-  const dayEnd = new Date(dayStart.getTime() + DAY_MS);
-  let states;
-  try {
-    states = await client.fetchHistory(priceParameter.entityId, {
-      start: dayStart.toISOString(),
-      end: dayEnd.toISOString(),
-      minimalResponse: false,
-    });
-  } catch (err) {
-    console.error(`Price history fetch failed for ${priceParameter.entityId}:`, err.message);
-    return [];
-  }
-  for (let i = states.length - 1; i >= 0; i--) {
-    const points = normalizePricePoints(states[i].attributes).filter((p) => {
-      const t = new Date(p.timestamp).getTime();
-      return t >= dayStart.getTime() && t < dayEnd.getTime();
-    });
-    if (points.length > 0) return points;
-  }
-  return [];
-}
-
 // Backfills a plan's SmartChargeHistory rows for every complete hour in
 // [rangeStartMs, rangeEndMs) — the money-saving counterpart of
 // computeTodaysSavings, but persisted so a chart can show it as a trend
@@ -620,9 +619,9 @@ async function historicalDayPriceCurve(client, priceParameter, dayStart) {
 // fetchPriceForecast, the same source evaluatePlan itself uses) rather than
 // from history, since it's both the freshest source and the only one that
 // works before HA even has a recorded history for today to read back; any
-// earlier day is read from HA's raw history while that's still within
-// HISTORY_RETENTION_MS, and simply skipped (no rows written) once it isn't
-// — there is no way to recover it at that point.
+// earlier day comes from TEMS's PriceHistory, falling back to HA's raw
+// history while that's still within HISTORY_RETENTION_MS, and is simply
+// skipped (no rows written) when neither has it.
 async function backfillPlanHistory(plan, rangeStartMs, rangeEndMs) {
   if (rangeStartMs >= rangeEndMs) return;
   // `plan.priceParameter` is `null` (not the raw id) when it was populated
@@ -658,8 +657,11 @@ async function backfillPlanHistory(plan, rangeStartMs, rangeEndMs) {
       dayPoints = forecast ? forecast.points : [];
     } else if (dayStartMs < todayStartMs && dayStartMs >= earliestRecoverableMs) {
       dayPoints = await historicalDayPriceCurve(client, priceParameter, new Date(dayStartMs));
+    } else if (dayStartMs < todayStartMs) {
+      // Past HA's history retention: only what TEMS stored itself.
+      dayPoints = await loadPriceHistory(priceParameter._id, new Date(dayStartMs), new Date(dayStartMs + DAY_MS));
     } else {
-      dayPoints = []; // future, or past HA's history retention — unrecoverable
+      dayPoints = []; // future
     }
 
     // Clip to the requested range in case it starts or ends mid-day.

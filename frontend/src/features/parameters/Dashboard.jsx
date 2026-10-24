@@ -65,9 +65,9 @@ function CategoryFilter({ parameters, value, onChange }) {
   );
 }
 
-// Chart types that show a live snapshot or HA's own forecast window, not a
-// period — the date bar doesn't apply to them.
-const PERIODLESS_TYPES = ['energyflow', 'price_forecast'];
+// Chart types that show a live snapshot, not a period — the date bar
+// doesn't apply to them.
+const PERIODLESS_TYPES = ['energyflow'];
 
 // The dashboard's date bar choice, kept for this browser tab so it survives
 // opening a chart full-screen and coming back.

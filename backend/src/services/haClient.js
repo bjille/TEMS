@@ -133,18 +133,42 @@ class HaClient extends EventEmitter {
   }
 
   /**
-   * One-off request over a short-lived WebSocket connection for HA's
-   * long-term statistics (`recorder/statistics_during_period`): hourly
+   * HA's long-term statistics (`recorder/statistics_during_period`): hourly
    * aggregates the recorder keeps indefinitely for every sensor with a
    * state_class, unlike the state history behind fetchHistory, which is
    * purged after ~10 days. Resolves to { [statisticId]: rows[] }.
    */
   fetchStatistics(statisticIds, { start, end, period = 'hour', types = ['sum', 'mean'] }) {
+    return this.wsRequest(
+      {
+        type: 'recorder/statistics_during_period',
+        start_time: start,
+        end_time: end,
+        statistic_ids: statisticIds,
+        period,
+        types,
+      },
+      'Statistieken ophalen mislukt'
+    ).then((result) => result || {});
+  }
+
+  /** Every entity's registry entry (entity_id, device_id, ...). */
+  fetchEntityRegistry() {
+    return this.wsRequest({ type: 'config/entity_registry/list' }, 'Entiteiten ophalen mislukt').then(
+      (result) => result || []
+    );
+  }
+
+  /**
+   * One-off WebSocket command over a short-lived connection (separate from
+   * the persistent state_changed subscription), resolving to its result.
+   */
+  wsRequest(command, failureMessage) {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(toWsUrl(this.baseUrl));
       const timer = setTimeout(() => {
         ws.terminate();
-        reject(new Error('Timeout bij ophalen van statistieken uit Home Assistant'));
+        reject(new Error(`Timeout bij ${command.type} in Home Assistant`));
       }, 30000);
       const finish = (fn, value) => {
         clearTimeout(timer);
@@ -161,22 +185,12 @@ class HaClient extends EventEmitter {
         if (msg.type === 'auth_required') {
           ws.send(JSON.stringify({ type: 'auth', access_token: this.token }));
         } else if (msg.type === 'auth_ok') {
-          ws.send(
-            JSON.stringify({
-              id: 1,
-              type: 'recorder/statistics_during_period',
-              start_time: start,
-              end_time: end,
-              statistic_ids: statisticIds,
-              period,
-              types,
-            })
-          );
+          ws.send(JSON.stringify({ id: 1, ...command }));
         } else if (msg.type === 'auth_invalid') {
           finish(reject, new Error(`HA auth failed: ${msg.message}`));
         } else if (msg.id === 1) {
-          if (msg.success) finish(resolve, msg.result || {});
-          else finish(reject, new Error(msg.error?.message || 'Statistieken ophalen mislukt'));
+          if (msg.success) finish(resolve, msg.result);
+          else finish(reject, new Error(msg.error?.message || failureMessage));
         }
       });
       ws.on('error', (err) => finish(reject, err));

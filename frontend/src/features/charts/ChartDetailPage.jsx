@@ -105,8 +105,10 @@ export default function ChartDetailPage() {
   }, [woningId, dispatch]);
 
   // Default the range picker to the chart's own configured period, once known.
+  // A price chart has no saved period of its own: it opens on today (and
+  // tomorrow's published prices).
   useEffect(() => {
-    if (chart && range === null) setRange(rangeValue(chart));
+    if (chart && range === null) setRange(chart.type === 'price_forecast' ? 'day' : rangeValue(chart));
   }, [chart, range]);
 
   // Without this memo, spreading `chart` into a new object on every render
@@ -151,9 +153,12 @@ export default function ChartDetailPage() {
   }
 
   const isEnergyFlow = chart.type === 'energyflow';
-  // Neither chart type is a fixed-range history query: energyflow is a live
-  // snapshot, price_forecast is HA's own forecast window (today/tomorrow).
-  const hasNoRange = isEnergyFlow || chart.type === 'price_forecast';
+  const isPrice = chart.type === 'price_forecast';
+  // energyflow is a live snapshot, not a history query.
+  const hasNoRange = isEnergyFlow;
+  // Price history is stored per calendar day, so a price chart only browses
+  // calendar periods and custom ranges, not windows rolling with "now".
+  const periodButtons = isPrice ? PERIOD_BUTTONS.filter((r) => Number.isNaN(Number(r.value))) : PERIOD_BUTTONS;
   const subtitle = isEnergyFlow
     ? Object.values(chart.flowRoles || {})
         .filter(Boolean)
@@ -174,7 +179,7 @@ export default function ChartDetailPage() {
         <h1>{chart.name}</h1>
         {!hasNoRange && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {PERIOD_BUTTONS.map((r) => (
+            {periodButtons.map((r) => (
               <button
                 key={r.value}
                 className="btn"
@@ -204,7 +209,7 @@ export default function ChartDetailPage() {
           setCompareMode={setCompareMode}
           compareDate={compareDate}
           setCompareDate={setCompareDate}
-          canCompare={chart.type !== 'smart_charge_savings'}
+          canCompare={chart.type !== 'smart_charge_savings' && !isPrice}
         />
       )}
 
@@ -222,7 +227,7 @@ export default function ChartDetailPage() {
         ) : chart.type === 'pie' ? (
           <PieTotalsChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'price_forecast' ? (
-          <PriceForecastChart chart={chart} woningId={woningId} height={480} />
+          <PriceForecastChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'cost' ? (
           <CostChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'smart_charge_savings' ? (

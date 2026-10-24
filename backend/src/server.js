@@ -8,6 +8,7 @@ const { haConnectionManager } = require('./services/haConnectionManager');
 const { automationEngine } = require('./services/automationEngine');
 const { smartChargeEngine, smartChargeHistoryEngine } = require('./services/smartChargeEngine');
 const { costEngine } = require('./services/costEngine');
+const { priceHistoryEngine } = require('./services/priceHistoryService');
 
 async function main() {
   await connectDb();
@@ -27,6 +28,7 @@ async function main() {
   smartChargeEngine.start();
   smartChargeHistoryEngine.start();
   costEngine.start();
+  priceHistoryEngine.start();
 
   server.listen(env.port, () => {
     console.log(`TEMS backend listening on port ${env.port}`);
@@ -42,6 +44,7 @@ function shutdown(server) {
   smartChargeEngine.stop();
   smartChargeHistoryEngine.stop();
   costEngine.stop();
+  priceHistoryEngine.stop();
   server.close(() => process.exit(0));
 }
 
