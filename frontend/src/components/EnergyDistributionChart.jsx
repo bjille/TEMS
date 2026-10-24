@@ -46,40 +46,55 @@ const PATH_NODES = {
 const pos = (v) => (typeof v === 'number' && v > 0 ? v : 0);
 
 /**
- * Splits the four live power readings (W; grid > 0 = import, battery > 0 =
- * discharging) into who feeds whom. Only the totals are measured, so — like
- * Home Assistant's energy distribution — solar goes to the house first,
- * then into the battery, then to the grid; the battery covers the house
- * before it feeds the grid; and the grid charges the battery only for what
- * the sun didn't.
+ * The live power readings (W; grid > 0 = import, battery > 0 = discharging)
+ * in the shape of period totals, both directions apart — so one split
+ * serves the live view and a period alike.
  */
-function splitFlows({ pv, grid, battery, thuisDirect }) {
-  const sun = pos(pv);
-  const imported = pos(grid);
-  const exported = pos(-grid);
-  const discharging = pos(battery);
-  const charging = pos(-battery);
+export function liveTotals({ pv, grid, battery, thuisDirect }) {
+  const totals = {};
+  if (typeof pv === 'number') totals.pv = pos(pv);
+  if (typeof grid === 'number') Object.assign(totals, { gridImport: pos(grid), gridExport: pos(-grid) });
+  if (typeof battery === 'number') Object.assign(totals, { discharge: pos(battery), charge: pos(-battery) });
+  if (typeof thuisDirect === 'number') totals.thuis = thuisDirect;
+  return totals;
+}
+
+/**
+ * Splits what was produced, imported, exported, charged and discharged
+ * (W live, kWh over a period) into who fed whom. Only those totals are
+ * measured, so it's allocated like Home Assistant's energy distribution:
+ * what went to the grid and into the battery came from the sun as far as
+ * it reached, and the rest of the sun went to the house; the battery fed
+ * the grid only for what the sun didn't, and the grid charged the battery
+ * only for what the sun didn't.
+ */
+export function splitEnergy(totals) {
+  const sun = pos(totals.pv);
+  const imported = pos(totals.gridImport);
+  const exported = pos(totals.gridExport);
+  const discharging = pos(totals.discharge);
+  const charging = pos(totals.charge);
 
   const pvToGrid = Math.min(sun, exported);
   const pvToBattery = Math.min(sun - pvToGrid, charging);
   const pvToThuis = Math.max(0, sun - pvToGrid - pvToBattery);
-  const batteryToGrid = Math.min(discharging, exported - pvToGrid);
-  const gridToBattery = Math.min(imported, charging - pvToBattery);
+  const batteryToGrid = Math.max(0, Math.min(discharging, exported - pvToGrid));
+  const gridToBattery = Math.max(0, Math.min(imported, charging - pvToBattery));
   const batteryToThuis = Math.max(0, discharging - batteryToGrid);
   const gridToThuis = Math.max(0, imported - gridToBattery);
-  const thuis = typeof thuisDirect === 'number' ? thuisDirect : pvToThuis + batteryToThuis + gridToThuis;
+  const thuis = typeof totals.thuis === 'number' ? totals.thuis : pvToThuis + batteryToThuis + gridToThuis;
 
   return {
     thuis,
     toThuis: { pv: pvToThuis, battery: batteryToThuis, grid: gridToThuis },
     links: [
-      { path: 'pvThuis', from: 'pv', value: pvToThuis },
-      { path: 'pvGrid', from: 'pv', value: pvToGrid },
-      { path: 'pvBattery', from: 'pv', value: pvToBattery },
-      { path: 'gridThuis', from: 'grid', value: gridToThuis },
-      { path: 'gridBattery', from: 'grid', value: gridToBattery },
-      { path: 'gridBattery', from: 'battery', value: batteryToGrid, reverse: true },
-      { path: 'batteryThuis', from: 'battery', value: batteryToThuis },
+      { path: 'pvThuis', from: 'pv', to: 'thuis', value: pvToThuis },
+      { path: 'pvGrid', from: 'pv', to: 'grid', value: pvToGrid },
+      { path: 'pvBattery', from: 'pv', to: 'battery', value: pvToBattery },
+      { path: 'gridThuis', from: 'grid', to: 'thuis', value: gridToThuis },
+      { path: 'gridBattery', from: 'grid', to: 'battery', value: gridToBattery },
+      { path: 'gridBattery', from: 'battery', to: 'grid', value: batteryToGrid, reverse: true },
+      { path: 'batteryThuis', from: 'battery', to: 'thuis', value: batteryToThuis },
     ],
   };
 }
@@ -90,11 +105,21 @@ function formatPower(w) {
   return `${Math.round(w).toLocaleString('nl-BE')} W`;
 }
 
-// More power, faster dots: from 6 s per run at a trickle to 1 s at 5 kW+.
-const durationFor = (w) => `${(6 - 5 * Math.min(1, Math.sqrt(w / 5000))).toFixed(2)}s`;
+function formatEnergy(kwh) {
+  return `${kwh.toLocaleString('nl-BE', { maximumFractionDigits: kwh >= 100 ? 0 : kwh >= 10 ? 1 : 2 })} kWh`;
+}
 
-function Flow({ id, link }) {
-  const active = link.value > 1;
+// What counts as a flow at all, and the size at which dots run fastest.
+const SCALES = {
+  W: { min: 1, full: 5000, format: formatPower },
+  kWh: { min: 0.005, format: formatEnergy },
+};
+
+// More flow, faster dots: from 6 s per run at a trickle to 1 s at `full`.
+const durationFor = (value, full) => `${(6 - 5 * Math.min(1, Math.sqrt(value / full))).toFixed(2)}s`;
+
+function Flow({ id, link, scale }) {
+  const active = link.value > scale.min;
   return (
     <g>
       <path id={id} d={PATHS[link.path]} className="edc-line" />
@@ -103,7 +128,7 @@ function Flow({ id, link }) {
           <path d={PATHS[link.path]} className="edc-line edc-line-active" style={{ stroke: COLORS[link.from] }} />
           <circle r="4" style={{ fill: COLORS[link.from] }}>
             <animateMotion
-              dur={durationFor(link.value)}
+              dur={durationFor(link.value, scale.full)}
               repeatCount="indefinite"
               calcMode="linear"
               keyPoints={link.reverse ? '1;0' : '0;1'}
@@ -119,10 +144,10 @@ function Flow({ id, link }) {
 }
 
 // "Thuis"'s ring, split into what share each source covers right now.
-function SourceRing({ x, y, toThuis }) {
+function SourceRing({ x, y, toThuis, min }) {
   const total = toThuis.pv + toThuis.battery + toThuis.grid;
   const circumference = 2 * Math.PI * R;
-  if (total <= 1) return <circle cx={x} cy={y} r={R} className="edc-ring" style={{ stroke: COLORS.thuis }} />;
+  if (total <= min) return <circle cx={x} cy={y} r={R} className="edc-ring" style={{ stroke: COLORS.thuis }} />;
   let offset = 0;
   return (
     <g transform={`rotate(-90 ${x} ${y})`}>
@@ -171,33 +196,47 @@ function Node({ role, lines, children }) {
 
 /**
  * Home Assistant-style energy distribution: fixed icons for zon, net,
- * batterij and thuis, with dots running along the lines between them for
- * the live power flows. `latest` holds the readings (W) per role, as in
- * EnergyFlowChart; `soc` (%) is optional.
+ * batterij and thuis, with dots running along the lines between them.
+ * `totals` is what splitEnergy takes — the live power (W, see liveTotals)
+ * or a period's energy (kWh) — and `unit` says which; `soc` (%) is
+ * optional.
  */
-export default function EnergyDistributionChart({ latest, soc, height = 320 }) {
+export default function EnergyDistributionChart({ totals, unit = 'W', soc, height = 320 }) {
   const idPrefix = useId().replace(/:/g, '');
-  const flows = useMemo(() => splitFlows(latest), [latest]);
-  const has = (role) => typeof latest[role] === 'number';
+  const flows = useMemo(() => splitEnergy(totals), [totals]);
+  const scale = useMemo(() => {
+    const base = SCALES[unit] || SCALES.W;
+    // A period's totals have no natural top speed: the biggest flow runs fastest.
+    return base.full ? base : { ...base, full: Math.max(...flows.links.map((l) => l.value), base.min) };
+  }, [unit, flows]);
+  const has = (role) =>
+    role === 'pv'
+      ? typeof totals.pv === 'number'
+      : role === 'grid'
+      ? typeof totals.gridImport === 'number'
+      : typeof totals.discharge === 'number';
   const hasPv = has('pv');
   const hasGrid = has('grid');
   const hasBattery = has('battery');
-  if (!hasPv && !hasGrid && !hasBattery) return <p className="muted">Geen live vermogensdata beschikbaar.</p>;
+  if (!hasPv && !hasGrid && !hasBattery) {
+    return <p className="muted">{unit === 'W' ? 'Geen live vermogensdata beschikbaar.' : 'Geen energiedata voor deze periode.'}</p>;
+  }
+  const format = scale.format;
 
   return (
     <svg viewBox="0 0 420 384" className="edc" style={{ height }} role="img" aria-label="Energiedistributie">
       {flows.links
         .filter((link) => PATH_NODES[link.path].every(has))
         .map((link) => (
-          <Flow key={`${link.path}-${link.from}`} id={`${idPrefix}-${link.path}-${link.from}`} link={link} />
+          <Flow key={`${link.path}-${link.from}`} id={`${idPrefix}-${link.path}-${link.from}`} link={link} scale={scale} />
         ))}
-      {hasPv && <Node role="pv" lines={[{ text: formatPower(pos(latest.pv)) }]} />}
+      {hasPv && <Node role="pv" lines={[{ text: format(pos(totals.pv)) }]} />}
       {hasGrid && (
         <Node
           role="grid"
           lines={[
-            { text: `← ${formatPower(pos(-latest.grid))}`, color: COLORS.pv },
-            { text: `→ ${formatPower(pos(latest.grid))}`, color: COLORS.grid },
+            { text: `← ${format(pos(totals.gridExport))}`, color: COLORS.pv },
+            { text: `→ ${format(pos(totals.gridImport))}`, color: COLORS.grid },
           ]}
         />
       )}
@@ -206,13 +245,13 @@ export default function EnergyDistributionChart({ latest, soc, height = 320 }) {
           role="battery"
           lines={[
             ...(typeof soc === 'number' ? [{ text: `${Math.round(soc)} %` }] : []),
-            { text: `↓ ${formatPower(pos(-latest.battery))}` },
-            { text: `↑ ${formatPower(pos(latest.battery))}` },
+            { text: `↓ ${format(pos(totals.charge))}` },
+            { text: `↑ ${format(pos(totals.discharge))}` },
           ]}
         />
       )}
-      <Node role="thuis" lines={[{ text: formatPower(Math.max(0, flows.thuis)) }]}>
-        <SourceRing x={NODES.thuis.x} y={NODES.thuis.y} toThuis={flows.toThuis} />
+      <Node role="thuis" lines={[{ text: format(Math.max(0, flows.thuis)) }]}>
+        <SourceRing x={NODES.thuis.x} y={NODES.thuis.y} toThuis={flows.toThuis} min={scale.min} />
       </Node>
     </svg>
   );

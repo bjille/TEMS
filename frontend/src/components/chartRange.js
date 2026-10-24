@@ -62,6 +62,24 @@ export function periodWindow(period, anchor) {
   return { from, to: shiftPeriod(period, from, 1) };
 }
 
+// The dashboard's view (see DateNavigator): 'live' — every chart its own
+// period, kept up to date, the energy flow as live power — or one period
+// for every chart: a calendar period around `anchor`, or the days `from`
+// through `to` ("YYYY-MM-DD") for 'range'.
+export const VIEW_MODES = ['live', ...CALENDAR_PERIODS, 'range'];
+
+// The window a view shows, or null for 'live' (or an incomplete range).
+export function viewWindow(view) {
+  if (isCalendarPeriod(view.mode)) return periodWindow(view.mode, view.anchor);
+  if (view.mode === 'range' && view.from && view.to) {
+    const from = fromDateInput(view.from);
+    const to = fromDateInput(view.to);
+    to.setDate(to.getDate() + 1);
+    return to > from ? { from, to } : null;
+  }
+  return null;
+}
+
 // A window's size, which picks the bucket size: 'short' (≤ 1 day), 'medium'
 // (≤ about two months) or 'year'.
 function withKind({ from, to }) {

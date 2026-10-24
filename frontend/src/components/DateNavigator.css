@@ -47,3 +47,29 @@
     min-width: 0;
   }
 }
+
+.date-navigator-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--success-text);
+  vertical-align: middle;
+}
+
+.date-navigator-active .date-navigator-live-dot {
+  animation: date-navigator-pulse 2s ease-in-out infinite;
+}
+
+@keyframes date-navigator-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .date-navigator-active .date-navigator-live-dot {
+    animation: none;
+  }
+}

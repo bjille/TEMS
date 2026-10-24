@@ -37,7 +37,14 @@ const PERIOD_BUTTONS = [
   { value: '720', label: '30 d' },
 ];
 
+// An energy flow chart shows live power, or the energy over a period.
+const FLOW_BUTTONS = [
+  { value: 'live', label: 'Live' },
+  ...PERIOD_BUTTONS.filter((r) => Number.isNaN(Number(r.value))),
+];
+
 const DAY_MS = 24 * 3600 * 1000;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const PREVIOUS_LABEL = {
   day: 'de dag ervoor',
@@ -80,10 +87,18 @@ export default function ChartDetailPage() {
   const charts = useSelector(selectChartsForWoning(woningId));
   const chart = charts.find((c) => c._id === chartId);
 
-  // Opened from the dashboard's date bar: ?period=day&date=2026-10-21.
+  // Opened from the dashboard's view bar: ?period=day&date=2026-10-21, or
+  // ?period=custom&from=2026-10-01&to=2026-10-21 for a range.
   const [searchParams] = useSearchParams();
-  const linkedPeriod = isCalendarPeriod(searchParams.get('period')) ? searchParams.get('period') : null;
-  const linkedDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
+  const linkedFrom = DATE_PATTERN.test(searchParams.get('from') || '') ? searchParams.get('from') : null;
+  const linkedTo = DATE_PATTERN.test(searchParams.get('to') || '') ? searchParams.get('to') : null;
+  const periodParam = searchParams.get('period');
+  const linkedPeriod = isCalendarPeriod(periodParam)
+    ? periodParam
+    : periodParam === 'custom' && linkedFrom && linkedTo
+    ? 'custom'
+    : null;
+  const linkedDate = DATE_PATTERN.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
 
   // A PERIOD_BUTTONS value; null until the chart's own period is known.
   const [range, setRange] = useState(linkedPeriod);
@@ -91,7 +106,7 @@ export default function ChartDetailPage() {
   const [anchor, setAnchor] = useState(() => (linkedDate ? fromDateInput(linkedDate) : new Date()));
   const [custom, setCustom] = useState(() => {
     const today = toDateInput(new Date());
-    return { from: today, to: today };
+    return linkedPeriod === 'custom' ? { from: linkedFrom, to: linkedTo } : { from: today, to: today };
   });
   // 'off' | 'previous' (the period before) | 'date' (starting at compareDate)
   const [compareMode, setCompareMode] = useState('off');
@@ -106,9 +121,11 @@ export default function ChartDetailPage() {
 
   // Default the range picker to the chart's own configured period, once known.
   // A price chart has no saved period of its own: it opens on today (and
-  // tomorrow's published prices).
+  // tomorrow's published prices); an energy flow chart opens live.
   useEffect(() => {
-    if (chart && range === null) setRange(chart.type === 'price_forecast' ? 'day' : rangeValue(chart));
+    if (chart && range === null) {
+      setRange(chart.type === 'price_forecast' ? 'day' : chart.type === 'energyflow' ? 'live' : rangeValue(chart));
+    }
   }, [chart, range]);
 
   // Without this memo, spreading `chart` into a new object on every render
@@ -120,7 +137,7 @@ export default function ChartDetailPage() {
   const shownWindow = useMemo(() => (range ? mainWindow(range, anchor, custom) : null), [range, anchor, custom]);
   // A rolling window ends now, so it's compared with the one before it.
   const rollingWindow = useMemo(() => {
-    if (!range || isCalendarPeriod(range) || range === 'custom') return null;
+    if (!range || isCalendarPeriod(range) || range === 'custom' || range === 'live') return null;
     const now = new Date();
     return { from: new Date(now.getTime() - Number(range) * 3600 * 1000), to: now };
   }, [range]);
@@ -133,7 +150,7 @@ export default function ChartDetailPage() {
     if (!range) return chart;
     return {
       ...chart,
-      ...(range === 'custom' ? {} : rangeFields(range)),
+      ...(range === 'custom' || range === 'live' ? {} : rangeFields(range)),
       ...(shownWindow ? { window: shownWindow } : {}),
       ...(comparison ? { compareWindow: comparison } : {}),
     };
@@ -154,11 +171,13 @@ export default function ChartDetailPage() {
 
   const isEnergyFlow = chart.type === 'energyflow';
   const isPrice = chart.type === 'price_forecast';
-  // energyflow is a live snapshot, not a history query.
-  const hasNoRange = isEnergyFlow;
   // Price history is stored per calendar day, so a price chart only browses
   // calendar periods and custom ranges, not windows rolling with "now".
-  const periodButtons = isPrice ? PERIOD_BUTTONS.filter((r) => Number.isNaN(Number(r.value))) : PERIOD_BUTTONS;
+  const periodButtons = isEnergyFlow
+    ? FLOW_BUTTONS
+    : isPrice
+    ? PERIOD_BUTTONS.filter((r) => Number.isNaN(Number(r.value)))
+    : PERIOD_BUTTONS;
   const subtitle = isEnergyFlow
     ? Object.values(chart.flowRoles || {})
         .filter(Boolean)
@@ -177,26 +196,24 @@ export default function ChartDetailPage() {
       </Link>
       <div className="section-header" style={{ marginTop: 12 }}>
         <h1>{chart.name}</h1>
-        {!hasNoRange && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {periodButtons.map((r) => (
-              <button
-                key={r.value}
-                className="btn"
-                style={range === r.value ? activeStyle : undefined}
-                onClick={() => {
-                  setRange(r.value);
-                  setCompareDate('');
-                }}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {periodButtons.map((r) => (
+            <button
+              key={r.value}
+              className="btn"
+              style={range === r.value ? activeStyle : undefined}
+              onClick={() => {
+                setRange(r.value);
+                setCompareDate('');
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {!hasNoRange && range && (
+      {range && range !== 'live' && (
         <PeriodBar
           range={range}
           anchor={anchor}
@@ -209,7 +226,7 @@ export default function ChartDetailPage() {
           setCompareMode={setCompareMode}
           compareDate={compareDate}
           setCompareDate={setCompareDate}
-          canCompare={chart.type !== 'smart_charge_savings' && !isPrice}
+          canCompare={chart.type !== 'smart_charge_savings' && !isPrice && !isEnergyFlow}
         />
       )}
 
@@ -223,7 +240,7 @@ export default function ChartDetailPage() {
 
       <div className="card">
         {isEnergyFlow ? (
-          <EnergyFlowChart chart={chart} woningId={woningId} height={480} />
+          <EnergyFlowChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'pie' ? (
           <PieTotalsChart chart={displayChart} woningId={woningId} height={480} />
         ) : chart.type === 'price_forecast' ? (

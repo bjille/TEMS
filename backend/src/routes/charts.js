@@ -1,5 +1,5 @@
 const express = require('express');
-const { body, validationResult } = require('express-validator');
+const { body, query, validationResult } = require('express-validator');
 const DashboardChart = require('../models/DashboardChart');
 const Parameter = require('../models/Parameter');
 const CostTracker = require('../models/CostTracker');
@@ -11,6 +11,9 @@ const { authorizeWoning } = require('../middleware/authorizeWoning');
 const { ApiError } = require('../middleware/errorHandler');
 const { CHART_TYPES, RANGE_PERIODS } = require('../models/DashboardChart');
 const { PARAMETER_TYPES } = require('../models/Parameter');
+const { HaClient } = require('../services/haClient');
+const { flowEnergy } = require('../services/energyTotals');
+const { decrypt } = require('../utils/crypto');
 
 const router = express.Router({ mergeParams: true });
 
@@ -177,6 +180,31 @@ router.get('/', async (req, res, next) => {
       .sort({ createdAt: 1 })
       .populate(POPULATE_PATHS);
     res.json(await expandAutoInclude(charts, req.params.woningId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The energy (kWh) behind an energy flow chart over a period — what its
+// diagram shows for a day, week, ... instead of the live power (see
+// services/energyTotals.js flowEnergy).
+router.get('/:chartId/energy', [query('from').isISO8601(), query('to').isISO8601()], async (req, res, next) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) throw new ApiError(400, 'Validation failed', errors.array());
+    const [chart] = await expandAutoInclude(
+      await DashboardChart.find({ _id: req.params.chartId, woning: req.params.woningId, type: 'energyflow' }),
+      req.params.woningId
+    );
+    if (!chart) throw new ApiError(404, 'Grafiek niet gevonden');
+    const woning = await Woning.findById(req.params.woningId).select('+haTokenEncrypted');
+    if (!woning) throw new ApiError(404, 'Woning not found');
+
+    const parameters = await Parameter.find({ woning: woning._id }).lean();
+    const client = new HaClient({ baseUrl: woning.haBaseUrl, token: decrypt(woning.haTokenEncrypted) });
+    const start = new Date(req.query.from);
+    const end = new Date(Math.min(new Date(req.query.to).getTime(), Date.now()));
+    res.json(await flowEnergy(client, chart, new Map(parameters.map((p) => [String(p._id), p])), start, end));
   } catch (err) {
     next(err);
   }

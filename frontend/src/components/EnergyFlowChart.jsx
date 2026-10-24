@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import * as echarts from 'echarts/core';
 import { SankeyChart } from 'echarts/charts';
@@ -6,8 +6,9 @@ import { TooltipComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { selectParametersForWoning } from '../features/parameters/parametersSlice';
+import { api } from '../services/api';
 import { CATEGORICAL } from '../palette';
-import EnergyDistributionChart from './EnergyDistributionChart';
+import EnergyDistributionChart, { liveTotals, splitEnergy } from './EnergyDistributionChart';
 
 // Registers only the chart types actually used, instead of pulling in
 // ECharts' full bundle (all chart types, both renderers) through the
@@ -21,8 +22,37 @@ const NODE_COLORS = {
   Zonnepanelen: CATEGORICAL.aqua,
   Batterij: CATEGORICAL.violet,
   Net: CATEGORICAL.magenta,
+  'Net (teruglevering)': CATEGORICAL.magenta,
+  'Batterij (laden)': CATEGORICAL.violet,
   Overig: 'var(--text-muted)',
 };
+
+// A period's energy refreshes this often while the period is still running.
+const PERIOD_REFRESH_MS = 5 * 60 * 1000;
+
+// Sankey node names for a period, where the grid and the battery can both
+// supply and take energy: the taking side gets its own node, as a sankey
+// can't loop back.
+const SOURCE_NODE = { pv: 'Zonnepanelen', grid: 'Net', battery: 'Batterij' };
+const TARGET_NODE = { thuis: 'Thuis', grid: 'Net (teruglevering)', battery: 'Batterij (laden)' };
+
+// The sankey of a period from its energy split (see splitEnergy), in Wh so
+// the thresholds and rounding made for watts fit.
+function buildPeriodFlows(split) {
+  const nodes = new Map();
+  const links = [];
+  for (const l of split.links) {
+    const value = round(l.value * 1000);
+    if (value <= 0.5) continue;
+    const source = SOURCE_NODE[l.from];
+    const target = TARGET_NODE[l.to];
+    for (const name of [source, target]) {
+      if (!nodes.has(name)) nodes.set(name, { name, itemStyle: { color: NODE_COLORS[name] } });
+    }
+    links.push({ source, target, value });
+  }
+  return { nodes: [...nodes.values()], links };
+}
 
 const DEVICE_PALETTE = [CATEGORICAL.yellow, CATEGORICAL.green, CATEGORICAL.red, CATEGORICAL.orange];
 
@@ -171,9 +201,45 @@ function applyDeviceTree(nodes, links, devicesByParent) {
   return { nodes: [...nodeMap.values()], links: nextLinks };
 }
 
+/**
+ * A saved DashboardChart of type 'energyflow': without `chart.window` the
+ * live power flows (W), with one the energy over that period (kWh, from
+ * GET /charts/:id/energy) — as a sankey, or as Home Assistant's energy
+ * distribution with the chart's `circular` option.
+ */
 export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
   const parameters = useSelector(selectParametersForWoning(woningId));
   const byId = useMemo(() => new Map(parameters.map((p) => [p._id, p])), [parameters]);
+  const fromMs = chart.window ? new Date(chart.window.from).getTime() : null;
+  const toMs = chart.window ? new Date(chart.window.to).getTime() : null;
+  const isPeriod = fromMs !== null;
+  const [energy, setEnergy] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (fromMs === null) return undefined;
+    let cancelled = false;
+    setEnergy(null);
+    async function load() {
+      try {
+        const { data } = await api.get(`/woningen/${woningId}/charts/${chart._id}/energy`, {
+          params: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() },
+        });
+        if (!cancelled) {
+          setEnergy(data);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.response?.data?.error?.message || 'Kon energiedata niet laden');
+      }
+    }
+    load();
+    const timer = toMs > Date.now() ? setInterval(load, PERIOD_REFRESH_MS) : null;
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [woningId, chart._id, fromMs, toMs]);
 
   const latestByRole = useMemo(
     () => ({
@@ -196,27 +262,36 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
     (chart.devices || []).forEach((d) => {
       const id = String(d.parameter?._id || d.parameter);
       const parentId = d.parent ? String(d.parent?._id || d.parent) : null;
-      const entry = { id, name: d.parameter?.label || id, value: lookupValue(byId, d.parameter) };
+      const value = isPeriod
+        ? typeof energy?.devices?.[id] === 'number'
+          ? energy.devices[id] * 1000
+          : undefined
+        : lookupValue(byId, d.parameter);
+      const entry = { id, name: d.parameter?.label || id, value };
       if (!map.has(parentId)) map.set(parentId, []);
       map.get(parentId).push(entry);
     });
     return map;
-  }, [byId, chart.devices]);
+  }, [byId, chart.devices, isPeriod, energy]);
 
   const { nodes, links } = useMemo(() => {
-    const flows = buildFlows(latestByRole);
+    if (isPeriod && !energy) return { nodes: [], links: [] };
+    const flows = isPeriod ? buildPeriodFlows(splitEnergy(energy)) : buildFlows(latestByRole);
     return applyDeviceTree(flows.nodes, flows.links, devicesByParent);
-  }, [latestByRole, devicesByParent]);
+  }, [isPeriod, energy, latestByRole, devicesByParent]);
 
   const option = useMemo(() => {
+    // A period's flows are in Wh (see buildPeriodFlows), shown as kWh.
+    const format = (v) =>
+      isPeriod ? `${(v / 1000).toLocaleString('nl-BE', { maximumFractionDigits: 2 })} kWh` : `${round(v)} W`;
     const base = {
       textStyle: { color: 'var(--text-secondary)' },
       tooltip: {
         trigger: 'item',
         formatter: (p) =>
           p.dataType === 'edge'
-            ? `${p.data.source} → ${p.data.target}: ${p.data.value} W`
-            : `${p.name}: ${round(p.value ?? p.data.value ?? 0)} W`,
+            ? `${p.data.source} → ${p.data.target}: ${format(p.data.value)}`
+            : `${p.name}: ${format(p.value ?? p.data.value ?? 0)}`,
       },
     };
 
@@ -234,16 +309,30 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
         },
       ],
     };
-  }, [nodes, links]);
+  }, [nodes, links, isPeriod]);
+
+  const totals = useMemo(() => (isPeriod ? energy : liveTotals(latestByRole)), [isPeriod, energy, latestByRole]);
+
+  if (error) return <p className="error-text">{error}</p>;
+  if (isPeriod && !energy) return <p className="muted">Laden...</p>;
 
   // "Energiedistributie" (the chart's `circular` option): fixed icons
-  // instead of a sankey.
+  // instead of a sankey. The charge level only means something live.
   if (chart.circular) {
-    return <EnergyDistributionChart latest={latestByRole} soc={soc} height={height} />;
+    return (
+      <EnergyDistributionChart
+        totals={totals}
+        unit={isPeriod ? 'kWh' : 'W'}
+        soc={isPeriod ? undefined : soc}
+        height={height}
+      />
+    );
   }
 
   if (links.length === 0) {
-    return <p className="muted">Geen live vermogensdata beschikbaar.</p>;
+    return (
+      <p className="muted">{isPeriod ? 'Geen energiedata voor deze periode.' : 'Geen live vermogensdata beschikbaar.'}</p>
+    );
   }
 
   return (

@@ -75,6 +75,11 @@ const alignToHour = (d) => {
   d.setMinutes(0, 0, 0);
   return d;
 };
+const QUARTER_MS = 15 * 60 * 1000;
+const alignToQuarter = (d) => {
+  d.setMinutes(d.getMinutes() - (d.getMinutes() % 15), 0, 0);
+  return d;
+};
 const alignToDay = (d) => {
   d.setHours(0, 0, 0, 0);
   return d;
@@ -88,6 +93,17 @@ function bucketHourly(readings, start, end) {
     timestamp: new Date(b.timestampMs).toISOString(),
     value: b.coveredMs > 0 ? Math.round((b.weightedSum / b.coveredMs) * 10) / 10 : 0,
   }));
+}
+
+// One point per quarter hour: the time-weighted average — a curve over
+// several days with a few thousand points instead of every raw reading.
+function bucketQuarterly(readings, start, end) {
+  return weightedBuckets(readings, start, end, QUARTER_MS, alignToQuarter)
+    .filter((b) => b.coveredMs > 0)
+    .map((b) => ({
+      timestamp: new Date(b.timestampMs).toISOString(),
+      value: Math.round((b.weightedSum / b.coveredMs) * 10) / 10,
+    }));
 }
 
 // One point per calendar day: total energy that day in kWh, treating each
@@ -159,7 +175,7 @@ async function statisticsBuckets(client, parameter, start, end, interval) {
     }));
   if (hourly.length === 0) return null;
 
-  if (!interval || interval === 'hour') {
+  if (!interval || interval === 'hour' || interval === 'quarter') {
     return hourly.map((p) => ({ timestamp: new Date(p.t).toISOString(), value: Math.round(p.v * 10) / 10 }));
   }
 
@@ -197,7 +213,7 @@ async function energyBuckets(client, parameter, start, end, interval) {
   const hourly = await hourlyEnergyKwh(client, parameter, start, end);
   if (!hourly) return null;
 
-  if (!interval || interval === 'hour') {
+  if (!interval || interval === 'hour' || interval === 'quarter') {
     return hourly.map((p) => ({ timestamp: new Date(p.t).toISOString(), value: Math.round(p.kwh * 10000) / 10 }));
   }
 
@@ -226,6 +242,32 @@ async function energyBuckets(client, parameter, start, end, interval) {
   return buckets;
 }
 
+// Quarter-hour averages from HA's 5-minute statistics (kept ~10 days), or
+// null without them.
+async function quarterStatistics(client, parameter, start, end) {
+  const result = await client.fetchStatistics([parameter.entityId], {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    period: '5minute',
+    types: ['mean'],
+  });
+  const sign = parameter.invert ? -1 : 1;
+  const quarters = new Map(); // quarterStartMs -> { sum, count }
+  for (const r of result[parameter.entityId] || []) {
+    if (typeof r.mean !== 'number') continue;
+    const t = typeof r.start === 'number' ? r.start : new Date(r.start).getTime();
+    const key = alignToQuarter(new Date(t)).getTime();
+    const entry = quarters.get(key) || { sum: 0, count: 0 };
+    entry.sum += r.mean * sign;
+    entry.count += 1;
+    quarters.set(key, entry);
+  }
+  if (quarters.size === 0) return null;
+  return [...quarters.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, e]) => ({ timestamp: new Date(t).toISOString(), value: Math.round((e.sum / e.count) * 10) / 10 }));
+}
+
 router.use(authenticate, authorizeWoning());
 
 // History for a single parameter, for the drill-down chart. Fetched live
@@ -238,9 +280,9 @@ router.get(
     query('parameterId').isMongoId(),
     query('from').optional().isISO8601(),
     query('to').optional().isISO8601(),
-    // hour: average per hour · day/month: kWh total per day/month (from a W
-    // sensor) · day_avg: average per day.
-    query('interval').optional().isIn(['hour', 'day', 'month', 'day_avg']),
+    // quarter / hour: average per quarter hour / hour · day/month: kWh total
+    // per day/month (from a W sensor) · day_avg: average per day.
+    query('interval').optional().isIn(['quarter', 'hour', 'day', 'month', 'day_avg']),
   ],
   async (req, res, next) => {
     try {
@@ -271,7 +313,12 @@ router.get(
       // With a long-term energy sensor, every aggregated view (and anything
       // reaching back past HA's raw history) comes from its statistics; only
       // the plain recent curve still shows the live power sensor.
-      if (parameter.energyEntityId && (interval || reachesPastHistory)) {
+      if (interval === 'quarter' && !reachesPastHistory) {
+        const fromStats = await quarterStatistics(client, parameter, start, end).catch(() => null);
+        if (fromStats) return res.json(fromStats);
+      }
+
+      if (parameter.energyEntityId && ((interval && interval !== 'quarter') || reachesPastHistory)) {
         const fromEnergy = await energyBuckets(client, parameter, start, end, interval).catch(() => null);
         if (fromEnergy) return res.json(fromEnergy);
       }
@@ -298,7 +345,8 @@ router.get(
         })
         .filter((r) => typeof r.value === 'number');
 
-      if (interval === 'hour') readings = bucketHourly(readings, start, end);
+      if (interval === 'quarter') readings = bucketQuarterly(readings, start, end);
+      else if (interval === 'hour') readings = bucketHourly(readings, start, end);
       else if (interval === 'day') readings = bucketDaily(readings, start, end);
       else if (interval === 'month') readings = bucketMonthly(readings, start, end);
       else if (interval === 'day_avg') readings = bucketDailyAverage(readings, start, end);

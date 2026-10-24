@@ -38,6 +38,17 @@ const FEATURES = [
   },
 ];
 
+const DEMO_ID = 'live-demo';
+
+// Scrolls smoothly to the live demo at the bottom; the href keeps it a
+// working link without JavaScript or when opened in a new tab.
+function scrollToDemo(e) {
+  const demo = document.getElementById(DEMO_ID);
+  if (!demo) return;
+  e.preventDefault();
+  demo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 export default function LandingPage() {
   const { user } = useSelector(selectAuth);
 
@@ -63,21 +74,21 @@ export default function LandingPage() {
           elektriciteitsprijzen en verbruik in een helder dashboard — waar je ook bent, en helpt je
           besparen op je energiefactuur.
         </p>
-        {user ? (
-          <Link className="btn btn-primary" to="/">
-            Ga naar je dashboard →
-          </Link>
-        ) : (
-          <Link className="btn btn-primary" to="/login">
-            Inloggen om te starten →
-          </Link>
-        )}
-      </section>
-
-      <section className="landing-screenshot">
-        <DemoDashboard
-          fallback={<img src="/tems-screenshot.png" alt="TEMS dashboard met batterij, zonnepanelen en energiestromen" />}
-        />
+        <div className="landing-hero-actions">
+          {user ? (
+            <Link className="btn btn-primary" to="/">
+              Ga naar je dashboard →
+            </Link>
+          ) : (
+            <Link className="btn btn-primary" to="/login">
+              Inloggen om te starten →
+            </Link>
+          )}
+          <a className="btn landing-demo-link" href={`#${DEMO_ID}`} onClick={scrollToDemo}>
+            <span className="landing-demo-link-dot" aria-hidden="true" />
+            Bekijk de live demo ↓
+          </a>
+        </div>
       </section>
 
       <section className="landing-features grid">
@@ -98,6 +109,12 @@ export default function LandingPage() {
           <li>De juiste sturingen worden automatisch ingesteld: je batterij laadt op het beste moment en je apparaten worden gespreid, zodat je piekverbruik onder je capaciteitstarief-grens blijft.</li>
           <li>Je logt in en volgt je energieverbruik en besparing live op, waar en wanneer je wil.</li>
         </ol>
+      </section>
+
+      <section id={DEMO_ID} className="landing-screenshot">
+        <DemoDashboard
+          fallback={<img src="/tems-screenshot.png" alt="TEMS dashboard met batterij, zonnepanelen en energiestromen" />}
+        />
       </section>
 
       <footer className="landing-footer muted">TEMS — Energiemanagement Platform</footer>

@@ -1,15 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 import Chart from 'react-apexcharts';
 import { api } from '../services/api';
+import { selectParametersForWoning } from '../features/parameters/parametersSlice';
 import { CATEGORICAL } from '../palette';
-import { chartRange, compareRange, windowTitle } from './chartRange';
+import { chartRange, compareRange, isCalendarPeriod, windowTitle } from './chartRange';
 
 const PALETTE = Object.values(CATEGORICAL);
+// A chart whose period runs up to now is fetched again this often (a
+// rolling window moves along); in between, a curve grows with every live
+// reading.
+const LIVE_REFRESH_MS = 5 * 60 * 1000;
+const LIVE_FLUSH_MS = 15 * 1000;
 
 // Which readings aggregation a chart asks for. Bar charts show consumption
 // per slot: average power per hour over a day, kWh per day over a week or
 // month, kWh per month over a year. Line/area charts show the raw curve up
-// to a week, hourly averages over a month and daily averages over a year —
+// to a day, quarter-hour averages up to a week, hourly averages over a month
+// and daily averages over a year —
 // the longer views come from HA's long-term statistics, as raw history only
 // reaches back ~10 days.
 function intervalFor(chart, range) {
@@ -19,6 +27,9 @@ function intervalFor(chart, range) {
   if (range.kind === 'year') return 'day_avg';
   // (+1: a week with a daylight-saving change has 169 hours)
   if (range.kind === 'medium' && !(range.hours <= 24 * 7 + 1)) return 'hour';
+  // Every raw reading of a few days is tens of thousands of points, which
+  // freezes the page: quarter-hour averages there.
+  if (range.kind === 'medium') return 'quarter';
   return null;
 }
 
@@ -39,8 +50,48 @@ function tooltipFormat(chart, range) {
 export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
   const [series, setSeries] = useState(null);
   const [error, setError] = useState(null);
-  const range = useMemo(() => chartRange(chart), [chart]);
+  // Bumped every LIVE_REFRESH_MS while the period runs up to now.
+  const [tick, setTick] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const range = useMemo(() => chartRange(chart), [chart, tick]);
   const compare = useMemo(() => compareRange(chart), [chart]);
+  // A rolling window ends at "now" as of the last refresh, hence the margin.
+  const isRunning = range.to.getTime() > Date.now() - LIVE_REFRESH_MS - 60 * 1000;
+  const isRolling = !chart.window && !isCalendarPeriod(chart.rangePeriod);
+  const isCurve = intervalFor(chart, range) === null;
+
+  useEffect(() => {
+    if (!isRunning) return undefined;
+    const timer = setInterval(() => setTick((t) => t + 1), LIVE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [isRunning]);
+
+  // Live readings since the last fetch, per parameter: [[ms, value], ...],
+  // appended to the curve of a period that's still running. Collected as
+  // they arrive (several a second across a woning) but drawn at most every
+  // LIVE_FLUSH_MS — redrawing a curve of thousands of points per reading
+  // would freeze the page.
+  const parameters = useSelector(selectParametersForWoning(woningId));
+  const [tail, setTail] = useState({});
+  const pendingTail = useRef({});
+  const fetchedUntil = useRef({});
+  useEffect(() => {
+    if (!isRunning || !isCurve) return;
+    const byId = new Map(parameters.map((p) => [p._id, p]));
+    for (const p of chart.parameters) {
+      const latest = byId.get(p._id)?.latest;
+      if (typeof latest?.value !== 'number' || !latest.timestamp) continue;
+      const ms = new Date(latest.timestamp).getTime();
+      const points = pendingTail.current[p._id] || [];
+      const last = points.length ? points[points.length - 1][0] : fetchedUntil.current[p._id] ?? -Infinity;
+      if (ms > last) pendingTail.current = { ...pendingTail.current, [p._id]: [...points, [ms, latest.value]] };
+    }
+  }, [parameters, chart.parameters, isRunning, isCurve]);
+  useEffect(() => {
+    if (!isRunning || !isCurve) return undefined;
+    const timer = setInterval(() => setTail(pendingTail.current), LIVE_FLUSH_MS);
+    return () => clearInterval(timer);
+  }, [isRunning, isCurve]);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +125,14 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
           compare && compare.from < new Date() ? fetchWindow(compare.from, compare.to) : null,
         ]);
         if (cancelled) return;
+        fetchedUntil.current = Object.fromEntries(
+          chart.parameters.map((p, i) => {
+            const last = main[i].data[main[i].data.length - 1];
+            return [p._id, last ? new Date(last.timestamp).getTime() : range.from.getTime()];
+          })
+        );
+        pendingTail.current = {};
+        setTail({});
 
         // The backend's buckets include the one starting at `to` itself
         // (the next day/month), which doesn't belong to this period.
@@ -88,6 +147,7 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
           ...chart.parameters.map((p, i) => ({
             name: compare ? `${baseName(p)} · ${mainTitle}` : baseName(p),
             group: 'main',
+            parameterId: p._id,
             data: toPoints(main[i], range.to),
           })),
           ...(previous
@@ -108,6 +168,12 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
     };
   }, [chart, woningId, range, compare]);
 
+  const shownSeries = useMemo(
+    () =>
+      series &&
+      series.map((s) => (s.group === 'main' && tail[s.parameterId] ? { ...s, data: [...s.data, ...tail[s.parameterId]] } : s)),
+    [series, tail]
+  );
   const compareCount = series ? series.filter((s) => s.group === 'compare').length : 0;
   const options = useMemo(() => {
     const colors = chart.parameters.map((_, i) => PALETTE[i % PALETTE.length]);
@@ -151,19 +217,20 @@ export default function ApexSeriesChart({ chart, woningId, height = 300 }) {
         type: 'datetime',
         labels: { datetimeUTC: false },
         // Fix the axis to the whole period, so a day that's still running
-        // (or a comparison day that's longer) doesn't stretch it.
+        // (or a comparison day that's longer) doesn't stretch it. A rolling
+        // window's end is "now", which live readings move past: open-ended.
         min: range.from.getTime(),
-        max: range.to.getTime() - (chart.type === 'bar' ? 1 : 0),
+        ...(isRolling && isRunning ? {} : { max: range.to.getTime() - (chart.type === 'bar' ? 1 : 0) }),
       },
       yaxis: { labels: { formatter: (v) => (Number.isInteger(v) ? v : v.toFixed(1)) } },
       legend: { position: 'top' },
       tooltip: { shared: chart.type !== 'bar', x: { format: tooltipFormat(chart, range) } },
       dataLabels: { enabled: false },
     };
-  }, [chart, range, compareCount]);
+  }, [chart, range, compareCount, isRolling, isRunning]);
 
   if (error) return <p className="error-text">{error}</p>;
   if (!series) return <p className="muted">Laden...</p>;
 
-  return <Chart key={compareCount} options={options} series={series} type={chart.type} height={height} />;
+  return <Chart key={compareCount} options={options} series={shownSeries} type={chart.type} height={height} />;
 }
