@@ -72,6 +72,11 @@ const parametersSlice = createSlice({
     error: null,
   },
   reducers: {
+    // Parameters that don't come from the authenticated API, e.g. the
+    // public demo's simulated woning (see features/landing/DemoDashboard).
+    parametersLoaded(state, action) {
+      state.byWoning[action.payload.woningId] = action.payload.parameters;
+    },
     liveReadingReceived(state, action) {
       const { parameterId, value, unit, timestamp } = action.payload;
       for (const woningId of Object.keys(state.byWoning)) {
@@ -117,7 +122,7 @@ const parametersSlice = createSlice({
   },
 });
 
-export const { liveReadingReceived } = parametersSlice.actions;
+export const { liveReadingReceived, parametersLoaded } = parametersSlice.actions;
 const EMPTY_PARAMETERS = [];
 export const selectParametersForWoning = (woningId) => (state) =>
   state.parameters.byWoning[woningId] || EMPTY_PARAMETERS;

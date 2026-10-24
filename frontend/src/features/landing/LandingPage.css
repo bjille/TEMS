@@ -157,3 +157,35 @@
   border-top: 1px solid var(--border);
   font-size: 0.85em;
 }
+
+.landing-demo-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.landing-demo-header h2 {
+  margin: 0;
+}
+
+.landing-demo-tag {
+  font-size: 0.8em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.landing-demo-note {
+  margin: 8px 0 16px;
+  max-width: 720px;
+}
+
+.landing-demo-grid {
+  margin-top: 16px;
+}
+
+.landing-demo-loading {
+  text-align: center;
+}

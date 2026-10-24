@@ -17,6 +17,7 @@ const smartChargeRoutes = require('./routes/smartCharge');
 const costsRoutes = require('./routes/costs');
 const adminUsersRoutes = require('./routes/adminUsers');
 const parameterCategoriesRoutes = require('./routes/parameterCategories');
+const publicRoutes = require('./routes/public');
 
 function createApp() {
   const app = express();
@@ -55,6 +56,7 @@ function createApp() {
   app.use('/api/woningen/:woningId/costs', costsRoutes);
   app.use('/api/admin/users', adminUsersRoutes);
   app.use('/api/parameter-categories', parameterCategoriesRoutes);
+  app.use('/api/public', publicRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -128,7 +128,7 @@ class PriceHistoryEngine {
 
   async record(parameter, backfill) {
     const woning = await Woning.findById(parameter.woning).select('+haTokenEncrypted');
-    if (!woning) return;
+    if (!woning || woning.simulated) return;
     const forecast = await fetchPriceForecast(parameter, woning);
     // A plain "current price" sensor has no curve; its state is already
     // kept as Readings.

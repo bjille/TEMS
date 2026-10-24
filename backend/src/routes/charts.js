@@ -476,3 +476,5 @@ router.delete('/:chartId', requireSuperadmin, async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.POPULATE_PATHS = POPULATE_PATHS;
+module.exports.expandAutoInclude = expandAutoInclude;

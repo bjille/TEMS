@@ -10,6 +10,10 @@ const woningSchema = new mongoose.Schema(
     status: { type: String, enum: ['active', 'paused', 'error'], default: 'active' },
     lastConnectedAt: { type: Date },
     lastError: { type: String },
+    // A demo woning without Home Assistant behind it: its values come from
+    // services/simulator.js (shown on the public landing page). Kept on
+    // status 'paused' so no HA connection or engine ever touches it.
+    simulated: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

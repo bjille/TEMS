@@ -41,8 +41,11 @@ function fetchWindow(window) {
 // curve of a dynamic-prices HA entity's `prices_today` / `prices_tomorrow`
 // attributes (see backend `price-forecast` route) — live, plus for a chosen
 // period (`chart.window`) the past days' curves TEMS stored in PriceHistory.
-export default function PriceForecastChart({ chart, woningId, height = 300 }) {
-  const [data, setData] = useState(null);
+// `data` ({ unit, points }) skips the fetch, for curves computed elsewhere
+// (the public demo).
+export default function PriceForecastChart({ chart, woningId, height = 300, data: givenData = null }) {
+  const [fetchedData, setData] = useState(null);
+  const data = givenData || fetchedData;
   const [error, setError] = useState(null);
   const parameter = chart.parameters?.[0];
   const fromMs = chart.window ? new Date(chart.window.from).getTime() : null;
@@ -55,7 +58,7 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
   const isLong = range ? range.to - range.from > 3 * 24 * 3600 * 1000 : false;
 
   useEffect(() => {
-    if (!parameter) return;
+    if (!parameter || givenData) return;
     let cancelled = false;
     async function load() {
       setError(null);
@@ -75,7 +78,7 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [parameter, woningId, range]);
+  }, [parameter, woningId, range, givenData]);
 
   const nowHourMs = useMemo(() => floorToHour(Date.now()), [data]);
 
@@ -103,7 +106,9 @@ export default function PriceForecastChart({ chart, woningId, height = 300 }) {
         background: 'transparent',
       },
       colors: isLong ? [ACCENT] : barColors,
-      stroke: isLong ? { width: 2, curve: 'stepline' } : undefined,
+      // Only set at all for a line: an explicit `stroke: undefined` makes
+      // ApexCharts drop its own defaults and crash on "colors".
+      ...(isLong ? { stroke: { width: 2, curve: 'stepline' } } : {}),
       plotOptions: { bar: { columnWidth: '80%', distributed: true } },
       legend: { show: false },
       dataLabels: { enabled: false },

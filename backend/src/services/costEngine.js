@@ -275,7 +275,10 @@ class CostEngine {
   }
 
   async tick() {
-    const trackers = await CostTracker.find({ validFrom: { $lte: new Date() } });
+    // A simulated woning has no HA to read from; its costs are simulated
+    // on the fly (see routes/public.js).
+    const simulated = await Woning.find({ simulated: true }).distinct('_id');
+    const trackers = await CostTracker.find({ validFrom: { $lte: new Date() }, woning: { $nin: simulated } });
     for (const tracker of trackers) {
       await this.compute(tracker).catch((err) => {
         console.error(`Cost computation failed for tracker ${tracker._id}:`, err.message);

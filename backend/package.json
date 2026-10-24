@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "seed": "node src/utils/seed.js",
     "lint": "eslint src",
-    "test": "jest"
+    "test": "jest",
+    "simulation": "node src/utils/createSimulationWoning.js"
   },
   "dependencies": {
     "axios": "^1.6.8",

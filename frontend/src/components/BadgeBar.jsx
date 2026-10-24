@@ -5,7 +5,7 @@ import { colorForType } from '../palette';
 import './BadgeBar.css';
 
 // Material Design Icons paths (24x24), one per parameter type.
-const ICONS = {
+export const ICONS = {
   home: 'M10,20V14H14V20H19V12H22L12,3L2,12H5V20H10Z',
   flash: 'M7,2V13H10V22L17,10H13L17,2H7Z',
   battery:
@@ -58,7 +58,8 @@ function formatBadgeValue(parameter) {
 // responsible for fetching the parameters and subscribing to live readings.
 // `sticky` keeps the bar pinned under the header while scrolling — meant for
 // pages about a single woning, not the multi-woning overview.
-export default function BadgeBar({ woningId, sticky = false }) {
+// `linkToHistory` (default) makes each chip open that parameter's history.
+export default function BadgeBar({ woningId, sticky = false, linkToHistory = true }) {
   const navigate = useNavigate();
   const parameters = useSelector(selectParametersForWoning(woningId));
   const badges = parameters.filter((p) => p.badge);
@@ -68,13 +69,14 @@ export default function BadgeBar({ woningId, sticky = false }) {
   return (
     <div className={`badge-bar${sticky ? ' badge-bar-sticky' : ''}`}>
       {badges.map((p) => {
-        const open = () => navigate(`/woningen/${woningId}/parameters/${p._id}/history`);
+        const open = () => linkToHistory && navigate(`/woningen/${woningId}/parameters/${p._id}/history`);
         return (
           <div
             key={p._id}
             className="badge-chip"
-            role="button"
-            tabIndex={0}
+            role={linkToHistory ? 'button' : undefined}
+            tabIndex={linkToHistory ? 0 : undefined}
+            style={linkToHistory ? undefined : { cursor: 'default' }}
             title={p.latest?.timestamp ? new Date(p.latest.timestamp).toLocaleTimeString('nl-BE') : 'Geen data'}
             onClick={open}
             onKeyDown={(e) => e.key === 'Enter' && open()}

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { selectAuth } from '../auth/authSlice';
 import { CATEGORICAL } from '../../palette';
+import DemoDashboard from './DemoDashboard';
 import './LandingPage.css';
 
 const FEATURES = [
@@ -73,6 +74,12 @@ export default function LandingPage() {
         )}
       </section>
 
+      <section className="landing-screenshot">
+        <DemoDashboard
+          fallback={<img src="/tems-screenshot.png" alt="TEMS dashboard met batterij, zonnepanelen en energiestromen" />}
+        />
+      </section>
+
       <section className="landing-features grid">
         {FEATURES.map((f) => (
           <div key={f.title} className="card landing-feature">
@@ -91,10 +98,6 @@ export default function LandingPage() {
           <li>De juiste sturingen worden automatisch ingesteld: je batterij laadt op het beste moment en je apparaten worden gespreid, zodat je piekverbruik onder je capaciteitstarief-grens blijft.</li>
           <li>Je logt in en volgt je energieverbruik en besparing live op, waar en wanneer je wil.</li>
         </ol>
-      </section>
-
-      <section className="landing-screenshot">
-        <img src="/tems-screenshot.png" alt="TEMS dashboard met batterij, zonnepanelen en energiestromen" />
       </section>
 
       <footer className="landing-footer muted">TEMS — Energiemanagement Platform</footer>

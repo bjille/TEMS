@@ -743,10 +743,11 @@ export default function AdminCharts() {
                     onChange={(e) => setForm({ ...form, circular: e.target.checked })}
                     style={{ marginRight: 6 }}
                   />
-                  Circulaire lay-out
+                  Energiedistributie
                 </label>
                 <p className="muted" style={{ fontSize: '0.85em', margin: '4px 0 0' }}>
-                  Rangschikt de knooppunten in een cirkel i.p.v. in lagen naast elkaar.
+                  Toont zon, net, batterij en thuis als vaste iconen met de stromen ertussen,
+                  i.p.v. een stroomdiagram. De toestellen worden dan niet getoond.
                 </p>
               </div>
             ) : isPriceForecast ? (

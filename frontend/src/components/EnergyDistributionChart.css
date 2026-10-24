@@ -1,0 +1,39 @@
+.edc {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.edc-line {
+  fill: none;
+  stroke: var(--gridline);
+  stroke-width: 1.5;
+}
+
+.edc-line-active {
+  stroke-width: 2;
+  opacity: 0.7;
+}
+
+.edc-ring {
+  fill: var(--surface-1);
+  stroke-width: 3;
+}
+
+.edc-icon {
+  fill: var(--text-primary);
+}
+
+.edc-value {
+  fill: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-anchor: middle;
+}
+
+.edc-label {
+  fill: var(--text-secondary);
+  font-size: 12px;
+  text-anchor: middle;
+}

@@ -1,20 +1,20 @@
 import { useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import * as echarts from 'echarts/core';
-import { SankeyChart, GraphChart } from 'echarts/charts';
+import { SankeyChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import ReactEChartsCore from 'echarts-for-react/esm/core';
 import { selectParametersForWoning } from '../features/parameters/parametersSlice';
 import { CATEGORICAL } from '../palette';
+import EnergyDistributionChart from './EnergyDistributionChart';
 
 // Registers only the chart types actually used, instead of pulling in
 // ECharts' full bundle (all chart types, both renderers) through the
 // default `echarts-for-react` import — that alone added ~1.2MB to the
-// production bundle. Note: ECharts' sankey series has no circular layout —
-// that's a `graph`-series-only feature — so the "circulaire lay-out" option
-// renders as a graph diagram instead of a sankey when enabled.
-echarts.use([SankeyChart, GraphChart, TooltipComponent, SVGRenderer]);
+// production bundle. The chart's `circular` option ("Energiedistributie")
+// doesn't use ECharts at all (see EnergyDistributionChart).
+echarts.use([SankeyChart, TooltipComponent, SVGRenderer]);
 
 const NODE_COLORS = {
   Thuis: CATEGORICAL.blue,
@@ -185,6 +185,12 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
     [byId, chart.flowRoles]
   );
 
+  // For the distribution diagram's battery: the woning's charge level.
+  const soc = useMemo(() => {
+    const v = parameters.find((p) => p.type === 'battery_soc')?.latest?.value;
+    return typeof v === 'number' ? v : undefined;
+  }, [parameters]);
+
   const devicesByParent = useMemo(() => {
     const map = new Map();
     (chart.devices || []).forEach((d) => {
@@ -214,71 +220,27 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
       },
     };
 
-    if (!chart.circular) {
-      return {
-        ...base,
-        series: [
-          {
-            type: 'sankey',
-            data: nodes,
-            links,
-            emphasis: { focus: 'adjacency' },
-            lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.4 },
-            label: { color: 'var(--text-secondary)' },
-            nodeAlign: 'justify',
-          },
-        ],
-      };
-    }
-
-    // ECharts' sankey series has no circular layout, so "circulaire
-    // lay-out" instead renders the same nodes/links as a `graph` series
-    // (which does support layout: 'circular'), with arrowheads on the
-    // edges to keep the flow direction readable. A node's "value" is
-    // max(inflow, outflow) rather than their sum — most nodes are pure
-    // sources or pure sinks anyway, but a pass-through node like "Thuis"
-    // (or "Stroomkring A" with its own children) has both, and since they
-    // balance by construction, summing them would silently double it.
-    const inflowByNode = new Map();
-    const outflowByNode = new Map();
-    links.forEach((l) => {
-      outflowByNode.set(l.source, (outflowByNode.get(l.source) || 0) + l.value);
-      inflowByNode.set(l.target, (inflowByNode.get(l.target) || 0) + l.value);
-    });
-    function nodeValue(name) {
-      return Math.max(inflowByNode.get(name) || 0, outflowByNode.get(name) || 0);
-    }
-    const maxFlow = Math.max(...nodes.map((n) => nodeValue(n.name)), 1);
-    const graphNodes = nodes.map((n) => ({
-      ...n,
-      value: round(nodeValue(n.name)),
-      symbolSize: 16 + (34 * nodeValue(n.name)) / maxFlow,
-    }));
-
     return {
       ...base,
       series: [
         {
-          type: 'graph',
-          layout: 'circular',
-          circular: { rotateLabel: true },
-          data: graphNodes,
+          type: 'sankey',
+          data: nodes,
           links,
-          roam: false,
-          label: {
-            show: true,
-            position: 'right',
-            color: 'var(--text-secondary)',
-            formatter: (p) => `${p.name}\n${p.value} W`,
-          },
-          edgeSymbol: ['none', 'arrow'],
-          edgeSymbolSize: 8,
-          lineStyle: { color: 'var(--baseline)', curveness: 0.2, opacity: 0.6 },
           emphasis: { focus: 'adjacency' },
+          lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.4 },
+          label: { color: 'var(--text-secondary)' },
+          nodeAlign: 'justify',
         },
       ],
     };
-  }, [nodes, links, chart.circular]);
+  }, [nodes, links]);
+
+  // "Energiedistributie" (the chart's `circular` option): fixed icons
+  // instead of a sankey.
+  if (chart.circular) {
+    return <EnergyDistributionChart latest={latestByRole} soc={soc} height={height} />;
+  }
 
   if (links.length === 0) {
     return <p className="muted">Geen live vermogensdata beschikbaar.</p>;

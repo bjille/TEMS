@@ -101,17 +101,28 @@ export function CostBarChart({ data, height = 300 }) {
 // month, monthly over a year.
 const INTERVAL_FOR_KIND = { short: 'hour', medium: 'day', year: 'month' };
 
+// A chart's selected cost calculations; none selected means all of them.
+const selectTrackers = (trackers, ids) => (ids.length > 0 ? trackers.filter((t) => ids.includes(t._id)) : trackers);
+
 /**
  * Renders a saved DashboardChart of type 'cost': the cost of its selected
  * cost calculations (all of the woning's when none are selected) over its
  * period (see chartRange), with the total of the period above the bars.
+ * `data` (a costs-summary response) skips the fetch, for costs computed
+ * elsewhere (the public demo).
  */
-export default function CostChart({ chart, woningId, height = 300 }) {
-  const [data, setData] = useState(null);
+export default function CostChart({ chart, woningId, height = 300, data: givenData = null }) {
+  const [fetchedData, setData] = useState(null);
   const [error, setError] = useState(null);
   const trackerIds = useMemo(() => (chart.costTrackers || []).map((t) => t._id || t), [chart.costTrackers]);
+  const data = useMemo(() => {
+    if (!givenData) return fetchedData;
+    const colored = withTrackerColors(givenData);
+    return { ...colored, trackers: selectTrackers(colored.trackers, trackerIds), compare: null };
+  }, [givenData, fetchedData, trackerIds]);
 
   useEffect(() => {
+    if (givenData) return undefined;
     let cancelled = false;
     async function load() {
       const rangeChart = {
@@ -123,8 +134,7 @@ export default function CostChart({ chart, woningId, height = 300 }) {
       const { from, to, kind } = chartRange(rangeChart);
       const compare = compareRange(rangeChart);
       const interval = INTERVAL_FOR_KIND[kind];
-      const select = (trackers) =>
-        trackerIds.length > 0 ? trackers.filter((t) => trackerIds.includes(t._id)) : trackers;
+      const select = (trackers) => selectTrackers(trackers, trackerIds);
       try {
         const [{ data: res }, previous] = await Promise.all([
           api.get(`/woningen/${woningId}/costs`, {
@@ -160,7 +170,7 @@ export default function CostChart({ chart, woningId, height = 300 }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [woningId, chart.rangeHours, chart.rangePeriod, chart.window, chart.compareWindow, trackerIds]);
+  }, [woningId, chart.rangeHours, chart.rangePeriod, chart.window, chart.compareWindow, trackerIds, givenData]);
 
   if (error) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Laden...</p>;
