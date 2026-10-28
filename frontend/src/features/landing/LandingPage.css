@@ -193,6 +193,15 @@
   font-size: 0.85em;
 }
 
+.landing-footer a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.landing-footer a:hover {
+  color: var(--text-primary);
+}
+
 .landing-demo-header {
   display: flex;
   align-items: center;

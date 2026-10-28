@@ -117,7 +117,12 @@ export default function LandingPage() {
         />
       </section>
 
-      <footer className="landing-footer muted">TEMS — Energiemanagement Platform</footer>
+      <footer className="landing-footer muted">
+        TEMS — Energiemanagement Platform gemaakt door{' '}
+        <a href="https://tconcepts.be" target="_blank" rel="noopener noreferrer">
+          TConcepts
+        </a>
+      </footer>
     </div>
   );
 }
