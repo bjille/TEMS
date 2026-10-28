@@ -9,16 +9,24 @@ const COLORS = {
   grid: CATEGORICAL.magenta,
   battery: CATEGORICAL.violet,
   thuis: CATEGORICAL.blue,
+  gas: CATEGORICAL.orange,
 };
 
 // Fixed layout (viewBox 420 × 384): zon on top, net left, thuis right,
-// batterij below — the lines between them meet in the middle.
+// batterij below — the lines between them meet in the middle. "Gas" sits
+// directly above "Thuis" with its own straight line down to it — unlike
+// pv/net/batterij it isn't part of the electrical split (see
+// DashboardChart.flowRoles.gas and splitEnergy), so it doesn't affect
+// Thuis's source ring or total, only its own animated line and value. A
+// water meter could be added the same way above "Net".
 const R = 44;
+const GAS_R = 36;
 const NODES = {
   pv: { x: 210, y: 64, label: 'Zonne-energie', icon: 'solar', labelAbove: true },
   grid: { x: 56, y: 195, label: 'Net', icon: 'tower' },
   thuis: { x: 364, y: 195, label: 'Thuis', icon: 'home' },
   battery: { x: 210, y: 318, label: 'Batterij', icon: 'battery' },
+  gas: { x: 364, y: 64, label: 'Gas', icon: 'flame', r: GAS_R, labelAbove: true },
 };
 
 // One path per pair of nodes, always drawn from the first to the second;
@@ -30,6 +38,9 @@ const PATHS = {
   gridThuis: 'M 100,195 H 320',
   gridBattery: 'M 100,207 H 167 Q 192 207 192 232 V 277',
   batteryThuis: 'M 228,277 V 232 Q 228 207 253 207 H 320',
+  // Gas isn't part of the electrical split (see splitEnergy) — it's drawn
+  // and animated the same way, just as a straight drop from directly above.
+  gasThuis: 'M 364,100 V 151',
 };
 
 // The nodes besides "Thuis" each path connects: it's only drawn when
@@ -41,6 +52,7 @@ const PATH_NODES = {
   gridThuis: ['grid'],
   gridBattery: ['grid', 'battery'],
   batteryThuis: ['battery'],
+  gasThuis: ['gas'],
 };
 
 const pos = (v) => (typeof v === 'number' && v > 0 ? v : 0);
@@ -173,12 +185,12 @@ function SourceRing({ x, y, toThuis, min }) {
 }
 
 function Node({ role, lines, children }) {
-  const { x, y, label, icon, labelAbove } = NODES[role];
+  const { x, y, label, icon, labelAbove, r = R } = NODES[role];
   // Icon on top, then one or two lines of values, centered in the circle.
   const top = y - 4 - (lines.length - 1) * 7;
   return (
     <g>
-      {children || <circle cx={x} cy={y} r={R} className="edc-ring" style={{ stroke: COLORS[role] }} />}
+      {children || <circle cx={x} cy={y} r={r} className="edc-ring" style={{ stroke: COLORS[role] }} />}
       <svg x={x - 11} y={top - 25} width="22" height="22" viewBox="0 0 24 24">
         <path d={ICONS[icon]} className="edc-icon" />
       </svg>
@@ -187,7 +199,7 @@ function Node({ role, lines, children }) {
           {line.text}
         </text>
       ))}
-      <text x={x} y={labelAbove ? y - R - 8 : y + R + 16} className="edc-label">
+      <text x={x} y={labelAbove ? y - r - 8 : y + r + 16} className="edc-label">
         {label}
       </text>
     </g>
@@ -218,7 +230,8 @@ export default function EnergyDistributionChart({ totals, unit = 'W', soc, heigh
   const hasPv = has('pv');
   const hasGrid = has('grid');
   const hasBattery = has('battery');
-  if (!hasPv && !hasGrid && !hasBattery) {
+  const hasGas = typeof totals.gas === 'number';
+  if (!hasPv && !hasGrid && !hasBattery && !hasGas) {
     return <p className="muted">{unit === 'W' ? 'Geen live vermogensdata beschikbaar.' : 'Geen energiedata voor deze periode.'}</p>;
   }
   const format = scale.format;
@@ -230,6 +243,13 @@ export default function EnergyDistributionChart({ totals, unit = 'W', soc, heigh
         .map((link) => (
           <Flow key={`${link.path}-${link.from}`} id={`${idPrefix}-${link.path}-${link.from}`} link={link} scale={scale} />
         ))}
+      {hasGas && (
+        <Flow
+          id={`${idPrefix}-gasThuis-gas`}
+          link={{ path: 'gasThuis', from: 'gas', to: 'thuis', value: totals.gas }}
+          scale={scale}
+        />
+      )}
       {hasPv && <Node role="pv" lines={[{ text: format(pos(totals.pv)) }]} />}
       {hasGrid && (
         <Node
@@ -253,6 +273,7 @@ export default function EnergyDistributionChart({ totals, unit = 'W', soc, heigh
       <Node role="thuis" lines={[{ text: format(Math.max(0, flows.thuis)) }]}>
         <SourceRing x={NODES.thuis.x} y={NODES.thuis.y} toThuis={flows.toThuis} min={scale.min} />
       </Node>
+      {hasGas && <Node role="gas" lines={[{ text: formatEnergy(totals.gas) }]} />}
     </svg>
   );
 }

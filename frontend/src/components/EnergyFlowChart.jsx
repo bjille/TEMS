@@ -24,6 +24,8 @@ const NODE_COLORS = {
   Net: CATEGORICAL.magenta,
   'Net (teruglevering)': CATEGORICAL.magenta,
   'Batterij (laden)': CATEGORICAL.violet,
+  Gas: CATEGORICAL.orange,
+  Verwarming: CATEGORICAL.orange,
   Overig: 'var(--text-muted)',
 };
 
@@ -37,19 +39,30 @@ const SOURCE_NODE = { pv: 'Zonnepanelen', grid: 'Net', battery: 'Batterij' };
 const TARGET_NODE = { thuis: 'Thuis', grid: 'Net (teruglevering)', battery: 'Batterij (laden)' };
 
 // The sankey of a period from its energy split (see splitEnergy), in Wh so
-// the thresholds and rounding made for watts fit.
-function buildPeriodFlows(split) {
+// the thresholds and rounding made for watts fit. `gasKwh`, when given, adds
+// an independent "Gas → Verwarming" pair alongside the electrical flows —
+// kept off "Thuis" itself (see DashboardChart.flowRoles.gas) so that node,
+// and its device breakdown, stays purely electrical.
+function buildPeriodFlows(split, gasKwh) {
   const nodes = new Map();
   const links = [];
+  function addNode(name) {
+    if (!nodes.has(name)) nodes.set(name, { name, itemStyle: { color: NODE_COLORS[name] } });
+  }
   for (const l of split.links) {
     const value = round(l.value * 1000);
     if (value <= 0.5) continue;
     const source = SOURCE_NODE[l.from];
     const target = TARGET_NODE[l.to];
-    for (const name of [source, target]) {
-      if (!nodes.has(name)) nodes.set(name, { name, itemStyle: { color: NODE_COLORS[name] } });
-    }
+    addNode(source);
+    addNode(target);
     links.push({ source, target, value });
+  }
+  const gasValue = round((gasKwh || 0) * 1000);
+  if (gasValue > 0.5) {
+    addNode('Gas');
+    addNode('Verwarming');
+    links.push({ source: 'Gas', target: 'Verwarming', value: gasValue });
   }
   return { nodes: [...nodes.values()], links };
 }
@@ -276,7 +289,7 @@ export default function EnergyFlowChart({ chart, woningId, height = 300 }) {
 
   const { nodes, links } = useMemo(() => {
     if (isPeriod && !energy) return { nodes: [], links: [] };
-    const flows = isPeriod ? buildPeriodFlows(splitEnergy(energy)) : buildFlows(latestByRole);
+    const flows = isPeriod ? buildPeriodFlows(splitEnergy(energy), energy.gas) : buildFlows(latestByRole);
     return applyDeviceTree(flows.nodes, flows.links, devicesByParent);
   }, [isPeriod, energy, latestByRole, devicesByParent]);
 

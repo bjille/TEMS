@@ -104,16 +104,55 @@ async function counterEnergyKwh(client, parameters, start, end) {
   return out;
 }
 
+// Natural gas's calorific value varies a bit by composition/region; this
+// matches the ≈10.5 kWh/m³ already used as CostTracker's default
+// meterConversionFactor for a gas meter billed per kWh.
+const GAS_KWH_PER_M3 = 10.55;
+
+function meterKwhFactor(unit) {
+  const key = String(unit || '').trim().toLowerCase();
+  if (key in KWH_PER_UNIT) return KWH_PER_UNIT[key];
+  return key === 'm3' || key === 'm³' ? GAS_KWH_PER_M3 : 1;
+}
+
+/**
+ * kWh over [start, end) straight from a cumulative meter's OWN long-term
+ * statistics — unlike counterEnergyKwh, which reads a *separate* linked
+ * energyEntityId, this is for a meter that's already itself the right kind
+ * of counter (e.g. a gas meter's m³ reading, converted via
+ * meterKwhFactor). Returns null when HA has no statistics for it.
+ */
+async function ownCounterEnergyKwh(client, parameter, start, end) {
+  const [result, state] = await Promise.all([
+    client
+      .fetchStatistics([parameter.entityId], {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        period: 'hour',
+        types: ['change'],
+      })
+      .catch(() => ({})),
+    client.fetchState(parameter.entityId).catch(() => null),
+  ]);
+  const rows = (result[parameter.entityId] || []).filter((r) => typeof r.change === 'number');
+  if (rows.length === 0) return null;
+  const factor = meterKwhFactor(state?.attributes?.unit_of_measurement || parameter.unit);
+  return Math.abs(rows.reduce((sum, r) => sum + r.change, 0) * factor);
+}
+
 /**
  * The energy behind an energy flow chart over [start, end), in kWh:
- * { pv, gridImport, gridExport, discharge, charge, thuis, devices: { id: kWh } }
- * with the live chart's sign conventions (grid > 0 = import, battery > 0 =
- * discharging). Consumers (thuis, devices) count from their long-term
- * energy sensor when they have one. A role without data is left out.
+ * { pv, gridImport, gridExport, discharge, charge, thuis, gas,
+ * devices: { id: kWh } } with the live chart's sign conventions (grid > 0 =
+ * import, battery > 0 = discharging). Consumers (thuis, devices) count from
+ * their long-term energy sensor when they have one; `gas` (a non-electrical,
+ * cumulative utility meter — see DashboardChart.flowRoles) counts from its
+ * own long-term statistics instead, converted to kWh-equivalent. A role
+ * without data is left out.
  */
 async function flowEnergy(client, chart, parametersById, start, end) {
   const byRef = (ref) => (ref ? parametersById.get(String(ref._id || ref)) : null);
-  const roles = Object.fromEntries(['pv', 'grid', 'battery', 'thuis'].map((k) => [k, byRef(chart.flowRoles?.[k])]));
+  const roles = Object.fromEntries(['pv', 'grid', 'battery', 'thuis', 'gas'].map((k) => [k, byRef(chart.flowRoles?.[k])]));
   const devices = (chart.devices || []).map((d) => byRef(d.parameter)).filter(Boolean);
   const consumers = [roles.thuis, ...devices].filter(Boolean);
 
@@ -148,6 +187,7 @@ async function flowEnergy(client, chart, parametersById, start, end) {
     set('charge', power.get(String(roles.battery._id))?.negative);
   }
   if (roles.thuis) set('thuis', consumed(roles.thuis));
+  if (roles.gas) set('gas', await ownCounterEnergyKwh(client, roles.gas, start, end));
 
   const deviceTotals = {};
   for (const p of devices) {
@@ -157,4 +197,4 @@ async function flowEnergy(client, chart, parametersById, start, end) {
   return { ...totals, devices: deviceTotals };
 }
 
-module.exports = { flowEnergy, powerEnergyKwh, counterEnergyKwh };
+module.exports = { flowEnergy, powerEnergyKwh, counterEnergyKwh, ownCounterEnergyKwh, meterKwhFactor };

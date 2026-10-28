@@ -17,7 +17,7 @@ const { decrypt } = require('../utils/crypto');
 
 const router = express.Router({ mergeParams: true });
 
-const FLOW_ROLE_KEYS = ['pv', 'battery', 'grid', 'thuis'];
+const FLOW_ROLE_KEYS = ['pv', 'battery', 'grid', 'thuis', 'gas'];
 const POPULATE_FIELDS = 'label unit type';
 const POPULATE_PATHS = [
   { path: 'parameters', select: POPULATE_FIELDS },
@@ -25,6 +25,7 @@ const POPULATE_PATHS = [
   { path: 'flowRoles.battery', select: POPULATE_FIELDS },
   { path: 'flowRoles.grid', select: POPULATE_FIELDS },
   { path: 'flowRoles.thuis', select: POPULATE_FIELDS },
+  { path: 'flowRoles.gas', select: POPULATE_FIELDS },
   { path: 'devices.parameter', select: POPULATE_FIELDS },
   { path: 'devices.parent', select: POPULATE_FIELDS },
   { path: 'costTrackers', select: 'name' },
@@ -225,6 +226,7 @@ router.post(
     body('flowRoles.battery').optional().isMongoId(),
     body('flowRoles.grid').optional().isMongoId(),
     body('flowRoles.thuis').optional().isMongoId(),
+    body('flowRoles.gas').optional().isMongoId(),
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
@@ -305,6 +307,7 @@ router.patch(
     body('flowRoles.battery').optional().isMongoId(),
     body('flowRoles.grid').optional().isMongoId(),
     body('flowRoles.thuis').optional().isMongoId(),
+    body('flowRoles.gas').optional().isMongoId(),
     body('devices').optional().isArray(),
     body('devices.*.parameter').isMongoId(),
     body('devices.*.parent').optional({ nullable: true }).isMongoId(),
@@ -453,6 +456,7 @@ router.post(
             pv: chart.flowRoles?.pv ? map.get(chart.flowRoles.pv.toString()) : undefined,
             battery: chart.flowRoles?.battery ? map.get(chart.flowRoles.battery.toString()) : undefined,
             grid: chart.flowRoles?.grid ? map.get(chart.flowRoles.grid.toString()) : undefined,
+            gas: chart.flowRoles?.gas ? map.get(chart.flowRoles.gas.toString()) : undefined,
           },
           devices: chart.devices.map((d) => ({
             parameter: map.get(d.parameter.toString()),

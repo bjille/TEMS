@@ -28,6 +28,10 @@ const FLOW_ROLES = [
     key: 'thuis',
     label: 'Thuisverbruik (optioneel, rechtstreekse meting — anders afgeleid uit bovenstaande)',
   },
+  {
+    key: 'gas',
+    label: 'Gasverbruik (optioneel, cumulatieve teller — enkel zichtbaar bij een gekozen periode)',
+  },
 ];
 
 // Switch entities (e.g. "switch.keuken_droogkast") report string states
@@ -104,7 +108,7 @@ const emptyForm = {
   type: 'line',
   range: 'day', // see RANGE_OPTIONS
   parameterIds: [],
-  flowRoles: { pv: '', battery: '', grid: '', thuis: '' },
+  flowRoles: { pv: '', battery: '', grid: '', thuis: '', gas: '' },
   devices: [], // [{ parameterId, parentId }] — parentId '' means directly under Thuis
   costTrackerIds: [], // empty = all of the woning's cost calculations
   smartChargePlanIds: [], // empty = all of the woning's smart-charge plans
@@ -319,6 +323,7 @@ export default function AdminCharts() {
         battery: chart.flowRoles?.battery?._id || '',
         grid: chart.flowRoles?.grid?._id || '',
         thuis: chart.flowRoles?.thuis?._id || '',
+        gas: chart.flowRoles?.gas?._id || '',
       },
       devices: (chart.devices || [])
         .filter((d) => d.parameter && !d.auto)

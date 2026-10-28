@@ -34,6 +34,16 @@ const dashboardChartSchema = new mongoose.Schema(
       battery: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
       grid: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
       thuis: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
+      // Optional extra, non-electrical utility meter (cumulative m³, not a
+      // signed power sensor like the roles above) — shown as its own
+      // source → "Verwarming"-node pair in a period's sankey only, never in
+      // the live view: a gas meter doesn't update fast enough (every few
+      // minutes) to mean anything as an instantaneous "flow", and keeping
+      // it off "Thuis" itself keeps that node — and its device breakdown —
+      // purely electrical. A water meter could be added the same way later.
+      // See services/energyTotals.js's flowEnergy and components/
+      // EnergyFlowChart.jsx's buildPeriodFlows.
+      gas: { type: mongoose.Schema.Types.ObjectId, ref: 'Parameter' },
     },
     // Optional per-appliance power sensors (W) that further break "Thuis"
     // down into individual consumers, arranged as a tree via `parent` (which
