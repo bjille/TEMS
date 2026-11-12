@@ -8,6 +8,19 @@ import ControlWidget from './ControlWidget';
 import { fetchControlHistory } from './controlApi';
 import { colorForType } from '../../palette';
 
+// Who/what issued a logged command: the user for manual commands, or the
+// automation / smart-charge plan (by name) when the engine acted on its own.
+function commandActor(h) {
+  const owner = h.user?.name ? ` (${h.user.name})` : '';
+  if (h.source === 'automation') {
+    return `Automatisatie: ${h.automation?.name || 'verwijderd'}${owner}`;
+  }
+  if (h.source === 'smart_charge') {
+    return `Slim laden: ${h.smartChargePlan?.name || 'verwijderd'}${owner}`;
+  }
+  return h.user?.name || '—';
+}
+
 export default function ControlPage() {
   const dispatch = useDispatch();
   const woningId = useSelector(selectSelectedWoningId);
@@ -81,7 +94,7 @@ export default function ControlPage() {
               <td>{new Date(h.createdAt).toLocaleString('nl-BE')}</td>
               <td>{h.parameter?.label || h.parameter?.entityId}</td>
               <td>{h.action}</td>
-              <td>{h.user?.name}</td>
+              <td>{commandActor(h)}</td>
               <td>{h.result === 'success' ? 'OK' : `Fout: ${h.error}`}</td>
             </tr>
           ))}

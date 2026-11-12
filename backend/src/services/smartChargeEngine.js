@@ -1012,6 +1012,7 @@ class SmartChargeEngine {
     await CommandLog.create({
       woning: plan.woning,
       parameter: switchParameter._id,
+      user: plan.createdBy,
       action: command.service,
       payload: command.isSelect ? { option: command.targetValue } : undefined,
       result,

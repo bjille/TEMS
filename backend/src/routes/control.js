@@ -71,7 +71,9 @@ router.get('/history', async (req, res, next) => {
       .sort({ createdAt: -1 })
       .limit(200)
       .populate('parameter', 'label entityId')
-      .populate('user', 'name email');
+      .populate('user', 'name email')
+      .populate('automation', 'name')
+      .populate('smartChargePlan', 'name');
     res.json(logs);
   } catch (err) {
     next(err);
