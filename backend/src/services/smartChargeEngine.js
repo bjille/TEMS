@@ -902,6 +902,19 @@ function chargeCommand(plan, chargeNow) {
   };
 }
 
+// Whether the switch's current "charging" state was set by an automation:
+// true when the most recent successful command on that parameter (from any
+// source) came from an automation and put it in the charge state.
+async function chargingStartedByAutomation(plan, parameterId) {
+  const last = await CommandLog.findOne({ parameter: parameterId, result: 'success' })
+    .sort({ createdAt: -1 })
+    .lean();
+  if (!last || last.source !== 'automation') return false;
+  return last.action === 'select_option'
+    ? last.payload?.option === plan.chargeOnOption
+    : last.action === 'turn_on';
+}
+
 /**
  * Periodically re-evaluates every enabled SmartChargePlan and, when its
  * computed plan says this hour should be charging (or shouldn't), brings
@@ -993,6 +1006,15 @@ class SmartChargeEngine {
     }
 
     const desiredOn = status.shouldChargeNow;
+
+    // Charging that an automation started is left alone: the plan only turns
+    // off what it (or nobody in particular) turned on, so it never cancels a
+    // deliberate automation-driven charge outside its own charge hours.
+    if (!desiredOn && (await chargingStartedByAutomation(plan, switchParameter._id))) {
+      await plan.save();
+      return { ...status, chargeOwnedByAutomation: true };
+    }
+
     let result = 'success';
     let errorMessage;
     try {
