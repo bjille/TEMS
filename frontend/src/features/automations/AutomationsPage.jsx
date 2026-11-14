@@ -10,7 +10,8 @@ import {
 import { fetchParameters } from '../parameters/parametersSlice';
 import { selectSelectedWoningId, selectWoningen } from '../woningen/woningenSlice';
 import AutomationForm from './AutomationForm';
-import { DAY_LABELS, parseCronExpression } from './cronUtils';
+import { parseCronExpression } from './cronUtils';
+import { describeDays } from './DayPicker';
 import CopyToWoningen from '../../components/CopyToWoningen';
 
 const OPERATOR_LABELS = { gt: '>', gte: '≥', lt: '<', lte: '≤', eq: '=', neq: '≠' };
@@ -27,10 +28,13 @@ function describeAction(automation) {
 }
 
 function describeTrigger(automation) {
-  if (automation.trigger.type === 'state') return 'Bij nieuwe meting';
+  if (automation.trigger.type === 'state') {
+    const days = automation.trigger.days;
+    return days?.length ? `Bij nieuwe meting (${describeDays(days)})` : 'Bij nieuwe meting';
+  }
   if (automation.trigger.type === 'timer') {
     if (automation.trigger.timerMode === 'clock') {
-      return `Dynamische timer — elke dag om ${automation.trigger.timerClockTime || '?'} (aanpasbaar via dashboard)`;
+      return `Dynamische timer — ${describeDays(automation.trigger.days)} om ${automation.trigger.timerClockTime || '?'} (aanpasbaar via dashboard)`;
     }
     const armed = automation.trigger.timerArmed && automation.trigger.timerTargetAt;
     const duration = automation.trigger.timerDurationMinutes ?? '?';
@@ -45,8 +49,7 @@ function describeTrigger(automation) {
       ? `Om ${time} op de eerste dag van elke maand`
       : `Om ${time} op dag ${dayOfMonth} van elke maand`;
   }
-  const dayLabel = days.length === 0 ? 'elke dag' : days.map((d) => DAY_LABELS[d]).join(', ');
-  return `Om ${time} (${dayLabel})`;
+  return `Om ${time} (${describeDays(days)})`;
 }
 
 export default function AutomationsPage() {

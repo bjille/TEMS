@@ -59,7 +59,10 @@ class AutomationEngine {
         this._registerCron(automation, automation.trigger.cronExpression);
       } else if (automation.trigger.type === 'timer') {
         if (automation.trigger.timerMode === 'clock' && automation.trigger.timerClockTime) {
-          const cronExpression = this._clockTimeToCron(automation.trigger.timerClockTime);
+          const cronExpression = this._clockTimeToCron(
+            automation.trigger.timerClockTime,
+            automation.trigger.days
+          );
           if (cronExpression) this._registerCron(automation, cronExpression);
         } else if (
           automation.trigger.timerMode === 'countdown' &&
@@ -72,12 +75,21 @@ class AutomationEngine {
     }
   }
 
-  // Converts a dashboard-set "HH:MM" into a daily 5-field cron expression.
-  _clockTimeToCron(timerClockTime) {
+  // Converts a dashboard-set "HH:MM" (plus optional weekdays, empty = every
+  // day) into a 5-field cron expression.
+  _clockTimeToCron(timerClockTime, days) {
     const match = /^([01]?\d|2[0-3]):([0-5]?\d)$/.exec(timerClockTime);
     if (!match) return null;
     const [, hour, minute] = match;
-    return `${Number(minute)} ${Number(hour)} * * *`;
+    const dayField = days && days.length > 0 && days.length < 7 ? [...days].sort().join(',') : '*';
+    return `${Number(minute)} ${Number(hour)} * * ${dayField}`;
+  }
+
+  // Whether a 'state' trigger may fire today (trigger.days empty = every day).
+  _activeToday(automation) {
+    const days = automation.trigger.days;
+    if (automation.trigger.type !== 'state' || !days || days.length === 0) return true;
+    return days.includes(new Date().getDay());
   }
 
   _registerCron(automation, expression) {
@@ -141,6 +153,7 @@ class AutomationEngine {
   }
 
   async maybeRun(automation) {
+    if (!this._activeToday(automation)) return;
     if (automation.lastTriggeredAt) {
       const elapsedMs = Date.now() - automation.lastTriggeredAt.getTime();
       if (elapsedMs < automation.cooldownMinutes * 60 * 1000) return;

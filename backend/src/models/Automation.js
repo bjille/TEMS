@@ -33,6 +33,10 @@ const automationSchema = new mongoose.Schema(
       // 'countdown' mode: absolute moment the armed countdown fires, persisted
       // so an in-progress countdown survives a backend restart.
       timerTargetAt: { type: Date },
+      // Weekdays (0 = zondag … 6 = zaterdag) on which a 'state' trigger or a
+      // 'clock' timer may fire; empty = every day. A 'schedule' trigger keeps
+      // its days in cronExpression instead.
+      days: { type: [{ type: Number, min: 0, max: 6 }], default: undefined },
     },
     // Sensor conditions. Required for 'state'/'schedule' triggers, optional
     // for 'timer' triggers (which fire purely on time) — enforced in

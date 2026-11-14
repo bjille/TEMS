@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { createAutomation, updateAutomation } from './automationsSlice';
 import { selectParametersForWoning } from '../parameters/parametersSlice';
-import { buildCronExpression, parseCronExpression, DAY_LABELS, ALL_DAYS } from './cronUtils';
+import { buildCronExpression, parseCronExpression } from './cronUtils';
+import DayPicker from './DayPicker';
 
 const OPERATORS = [
   { value: 'gt', label: '>' },
@@ -33,7 +34,9 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
   const [triggerType, setTriggerType] = useState(automation?.trigger?.type || 'state');
   const [hour, setHour] = useState(initialCron.hour);
   const [minute, setMinute] = useState(initialCron.minute);
-  const [days, setDays] = useState(initialCron.days);
+  const [days, setDays] = useState(
+    automation?.trigger?.type === 'schedule' ? initialCron.days : automation?.trigger?.days || []
+  );
   const [repeat, setRepeat] = useState(initialCron.dayOfMonth ? 'monthly' : 'weekly');
   const [dayOfMonth, setDayOfMonth] = useState(initialCron.dayOfMonth || 1);
   const [timerMode, setTimerMode] = useState(automation?.trigger?.timerMode || 'countdown');
@@ -81,10 +84,6 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
     setConditions((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function toggleDay(day) {
-    setDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
-  }
-
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
@@ -100,10 +99,10 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
     } else if (triggerType === 'timer') {
       trigger =
         timerMode === 'clock'
-          ? { type: 'timer', timerMode: 'clock', timerClockTime }
+          ? { type: 'timer', timerMode: 'clock', timerClockTime, days }
           : { type: 'timer', timerMode: 'countdown', timerDurationMinutes: Number(timerDurationMinutes) };
     } else {
-      trigger = { type: 'state' };
+      trigger = { type: 'state', days };
     }
 
     const payload = {
@@ -194,8 +193,10 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
                 value={timerClockTime}
                 onChange={(e) => setTimerClockTime(e.target.value)}
               />
+              <label style={{ fontWeight: 'normal', display: 'block', marginTop: 8 }}>Dagen</label>
+              <DayPicker days={days} onChange={setDays} />
               <p className="muted" style={{ fontSize: '0.8em' }}>
-                Het tijdstip kan nadien op het dashboard bij het toestel zelf aangepast worden.
+                Tijdstip en dagen kunnen nadien op het dashboard bij het toestel zelf aangepast worden.
               </p>
             </div>
           )}
@@ -243,30 +244,20 @@ export default function AutomationForm({ woningId, automation, onDone, onCancel 
               <span>van elke maand</span>
             </div>
           ) : (
-          <>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {ALL_DAYS.map((d) => (
-              <button
-                type="button"
-                key={d}
-                className="btn"
-                style={days.includes(d) ? { borderColor: '#2a78d6', color: '#2a78d6' } : undefined}
-                onClick={() => toggleDay(d)}
-              >
-                {DAY_LABELS[d]}
-              </button>
-            ))}
-          </div>
-          <p className="muted" style={{ fontSize: '0.8em' }}>
-            Geen dag geselecteerd = elke dag.
-          </p>
-          </>
+            <DayPicker days={days} onChange={setDays} />
           )}
           {repeat === 'monthly' && (
             <p className="muted" style={{ fontSize: '0.8em' }}>
               Dag 1 tot 28, zodat de automatisering ook in februari afgaat.
             </p>
           )}
+        </div>
+      )}
+
+      {triggerType === 'state' && (
+        <div className="form-field">
+          <label>Actief op dagen</label>
+          <DayPicker days={days} onChange={setDays} />
         </div>
       )}
 

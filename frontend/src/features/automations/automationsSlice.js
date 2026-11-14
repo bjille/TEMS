@@ -95,11 +95,11 @@ export const disarmTimer = createAsyncThunk(
 
 export const setTimerClock = createAsyncThunk(
   'automations/timerClock',
-  async ({ woningId, automationId, timerClockTime }, { rejectWithValue }) => {
+  async ({ woningId, automationId, timerClockTime, days }, { rejectWithValue }) => {
     try {
       const { data } = await api.patch(
         `/woningen/${woningId}/automations/${automationId}/timer/clock`,
-        { timerClockTime }
+        { timerClockTime, ...(days ? { days } : {}) }
       );
       return { woningId, automation: data };
     } catch (err) {

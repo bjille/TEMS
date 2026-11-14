@@ -29,6 +29,8 @@ const automationValidators = [
   body('trigger.timerMode').optional().isIn(['countdown', 'clock']),
   body('trigger.timerClockTime').optional().matches(CLOCK_TIME_RE),
   body('trigger.timerDurationMinutes').optional().isInt({ min: 1 }),
+  body('trigger.days').optional().isArray({ max: 7 }),
+  body('trigger.days.*').isInt({ min: 0, max: 6 }).toInt(),
   body('conditions').isArray(),
   body('conditions.*.parameter').isMongoId(),
   body('conditions.*.operator').isIn(OPERATORS),
@@ -210,6 +212,7 @@ router.post(
             timerMode: automation.trigger.timerMode,
             timerClockTime: automation.trigger.timerClockTime,
             timerDurationMinutes: automation.trigger.timerDurationMinutes,
+            days: automation.trigger.days,
             // Never copy an in-progress countdown into another woning.
             timerArmed: false,
             timerTargetAt: undefined,
@@ -307,12 +310,15 @@ router.post('/:automationId/timer/disarm', async (req, res, next) => {
 router.patch(
   '/:automationId/timer/clock',
   body('timerClockTime').matches(CLOCK_TIME_RE),
+  body('days').optional().isArray({ max: 7 }),
+  body('days.*').isInt({ min: 0, max: 6 }).toInt(),
   async (req, res, next) => {
     try {
       checkValidation(req);
       const automation = await loadTimerAutomation(req, 'clock');
 
       automation.trigger.timerClockTime = req.body.timerClockTime;
+      if (req.body.days) automation.trigger.days = [...new Set(req.body.days)].sort();
       await automation.save();
 
       await automationEngine.refreshWoning(req.params.woningId);

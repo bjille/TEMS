@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { armTimer, disarmTimer, setTimerClock } from './automationsSlice';
+import DayPicker from './DayPicker';
 
 function formatRemaining(ms) {
   const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
@@ -17,9 +18,11 @@ export default function TimerWidget({ woningId, automation }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
   const { timerMode, timerArmed, timerTargetAt, timerDurationMinutes, timerClockTime } = automation.trigger;
+  const savedDaysKey = (automation.trigger.days || []).join(',');
 
   const [duration, setDuration] = useState(timerDurationMinutes ?? 30);
   const [clockTime, setClockTime] = useState(timerClockTime || '22:00');
+  const [days, setDays] = useState(automation.trigger.days || []);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -31,6 +34,11 @@ export default function TimerWidget({ woningId, automation }) {
   useEffect(() => {
     setClockTime(timerClockTime || '22:00');
   }, [timerClockTime]);
+
+  useEffect(() => {
+    setDays(savedDaysKey ? savedDaysKey.split(',').map(Number) : []);
+  }, [savedDaysKey]);
+  const daysChanged = [...days].sort().join(',') !== savedDaysKey;
 
   async function run(action) {
     setPending(true);
@@ -59,13 +67,21 @@ export default function TimerWidget({ woningId, automation }) {
           />
           <button
             className="btn"
-            disabled={pending || clockTime === timerClockTime}
+            disabled={pending || (clockTime === timerClockTime && !daysChanged)}
             onClick={() =>
-              run(setTimerClock({ woningId, automationId: automation._id, timerClockTime: clockTime }))
+              run(setTimerClock({ woningId, automationId: automation._id, timerClockTime: clockTime, days }))
             }
           >
             Opslaan
           </button>
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <DayPicker days={days} onChange={setDays} disabled={pending} hint={false} />
+          {days.length === 0 && (
+            <div className="muted" style={{ fontSize: '0.75em' }}>
+              Elke dag
+            </div>
+          )}
         </div>
         {error && <p className="error-text">{error}</p>}
       </div>
